@@ -93,9 +93,11 @@ export class FollowCamera {
       }
     } else if (player.tagTarget) {
       // Swing around to show the wall being painted.
-      const wallYaw = Math.atan2(player.tagTarget.normal.x, player.tagTarget.normal.z);
-      this.yaw = dampAngle(this.yaw, wallYaw + 0.55, 4.5, dt);
-      this.pitch = damp(this.pitch, 0.06, 4, dt);
+      // The camera offset runs opposite `yaw`, so face the wall by looking
+      // back along its normal, swung round a little to keep the rudie in shot.
+      const wallYaw = Math.atan2(-player.tagTarget.normal.x, -player.tagTarget.normal.z);
+      this.yaw = dampAngle(this.yaw, wallYaw + 0.85, 4.5, dt);
+      this.pitch = damp(this.pitch, 0.02, 4, dt);
     }
 
     // --- target point ---

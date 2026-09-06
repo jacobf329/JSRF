@@ -269,15 +269,11 @@ export class Level {
       this.b.add(boxGeo(w + 0.24, 2.6, d * 0.9), toon(PALETTE.deepBlue, { steps: 2 }), {
         transform: { x, y: 1.6, z }, collide: false, castShadow: false,
       });
-      // Awning on the street-facing side.
+      // Sun canopy, kept high enough to leave the tag walls clear.
       const awningMat = toon(PALETTE.bloodOrange, { steps: 2 });
-      const faces = [
-        { ry: 0, ox: 0, oz: d / 2 + 0.9, w },
-        { ry: 0, ox: 0, oz: -d / 2 - 0.9, w },
-      ];
-      for (const f of faces) {
-        this.b.add(boxGeo(f.w * 0.86, 0.16, 1.8), awningMat, {
-          transform: { x: x + f.ox, y: 3.4, z: z + f.oz, rx: f.oz > 0 ? -0.22 : 0.22 },
+      for (const oz of [d / 2 + 0.6, -d / 2 - 0.6]) {
+        this.b.add(boxGeo(w * 0.86, 0.16, 1.2), awningMat, {
+          transform: { x, y: 6.6, z: z + oz, rx: oz > 0 ? -0.24 : 0.24 },
           collide: false,
         });
       }
@@ -432,9 +428,10 @@ export class Level {
       const count = Math.max(2, Math.floor(Math.max(w, d) / 5));
       for (let i = 0; i < count; i++) {
         const t = (i + 0.5) / count - 0.5;
-        this.b.add(sphereGeo(1.0 + this.rng() * 0.4, 8), toon(PALETTE.foliage, { steps: 2 }), {
-          transform: { x: x + (w > d ? t * w : 0), y: 1.9, z: z + (d >= w ? t * d : 0) },
-          collide: false,
+        const bush = 0.62 + this.rng() * 0.24;
+        this.b.add(sphereGeo(bush, 8), toon(PALETTE.foliage, { steps: 2 }), {
+          transform: { x: x + (w > d ? t * w : 0), y: 1.3 + bush * 0.5, z: z + (d >= w ? t * d : 0) },
+          collide: false, sy: 0.85,
         });
       }
     }
