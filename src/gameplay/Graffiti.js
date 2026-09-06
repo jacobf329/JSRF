@@ -5,10 +5,11 @@ import { clamp, damp } from '../core/MathUtils.js';
 
 const DIRECTIONS = ['up', 'down', 'left', 'right'];
 
-// Building faces carry window bands and shopfronts that stand ~0.12m proud, so
-// decals sit further out than that to avoid being swallowed by them.
-const DECAL_OFFSET = 0.3;
-const MARKER_OFFSET = 0.34;
+// Window bands and shopfronts stand a few centimetres proud of the wall, so
+// decals clear them by a little. They write no depth and are skipped by the
+// outline pass, which keeps an ink rectangle from appearing around the piece.
+const DECAL_OFFSET = 0.09;
+const MARKER_OFFSET = 0.12;
 
 const SIZE_RULES = {
   medium: { cans: 1, steps: 3, points: 500 },

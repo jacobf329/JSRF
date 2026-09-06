@@ -79,6 +79,8 @@ export class Game {
     this.menus = new Menus(this.uiRoot, this);
     this.menus.onAction = (action) => this.onMenuAction(action);
 
+    this._normalPassExcluded = [this.sky.mesh, this.graffiti.group, this.effects.points];
+
     this._bindFeedback();
     this.setMode(MODE.TITLE);
     this.resize();
@@ -311,8 +313,10 @@ export class Game {
 
   render(dt) {
     this.sky.update(dt, this.camera);
+    // Overlays write no depth, so keeping them out of the normal pass too
+    // stops the edge detect drawing ink around decals, beacons and particles.
     this.renderer.render(this.scene, this.camera, {
-      hideDuringNormalPass: [this.sky.mesh],
+      hideDuringNormalPass: this._normalPassExcluded,
       time: this.time,
     });
   }

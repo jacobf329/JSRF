@@ -248,7 +248,7 @@ export class Level {
 
     // Window bands.
     const bandMat = glass();
-    const inset = 0.12;
+    const inset = 0.03;
     const rows = Math.max(1, Math.floor((h - 3) / 3.4));
     for (let i = 0; i < rows; i++) {
       const y = 3 + i * 3.4;
@@ -263,10 +263,10 @@ export class Level {
 
     // Ground floor shopfront band.
     if (style === 'shop' || style === 'low') {
-      this.b.add(boxGeo(w * 0.9, 2.6, d + 0.24), toon(PALETTE.deepBlue, { steps: 2 }), {
+      this.b.add(boxGeo(w * 0.9, 2.6, d + 0.06), toon(PALETTE.deepBlue, { steps: 2 }), {
         transform: { x, y: 1.6, z }, collide: false, castShadow: false,
       });
-      this.b.add(boxGeo(w + 0.24, 2.6, d * 0.9), toon(PALETTE.deepBlue, { steps: 2 }), {
+      this.b.add(boxGeo(w + 0.06, 2.6, d * 0.9), toon(PALETTE.deepBlue, { steps: 2 }), {
         transform: { x, y: 1.6, z }, collide: false, castShadow: false,
       });
       // Sun canopy, kept high enough to leave the tag walls clear.
@@ -428,10 +428,10 @@ export class Level {
       const count = Math.max(2, Math.floor(Math.max(w, d) / 5));
       for (let i = 0; i < count; i++) {
         const t = (i + 0.5) / count - 0.5;
-        const bush = 0.62 + this.rng() * 0.24;
+        const bush = 0.46 + this.rng() * 0.16;
         this.b.add(sphereGeo(bush, 8), toon(PALETTE.foliage, { steps: 2 }), {
-          transform: { x: x + (w > d ? t * w : 0), y: 1.3 + bush * 0.5, z: z + (d >= w ? t * d : 0) },
-          collide: false, sy: 0.85,
+          transform: { x: x + (w > d ? t * w : 0), y: 1.28 + bush * 0.5, z: z + (d >= w ? t * d : 0), sy: 0.8 },
+          collide: false,
         });
       }
     }

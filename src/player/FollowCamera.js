@@ -8,6 +8,9 @@ const _dir = new THREE.Vector3();
 const _tmp = new THREE.Vector3();
 const _hit = { point: new THREE.Vector3(), normal: new THREE.Vector3(), distance: 0, surface: 0 };
 
+/** Never let the camera get closer than this; below it the skater fills the frame. */
+const MIN_DISTANCE = 2.5;
+
 /**
  * Chase camera that auto-aligns behind the skater's momentum but yields to
  * manual input, pulls in when the world gets between it and the player, and
@@ -23,6 +26,7 @@ export class FollowCamera {
     this.distance = 7.4;
     this.height = 1.55;
     this.currentDistance = this.distance;
+    this.liftPitch = 0;
 
     this.position = new THREE.Vector3();
     this.lookAt = new THREE.Vector3();
@@ -50,14 +54,24 @@ export class FollowCamera {
     this.shake = Math.min(1.4, this.shake + amount);
   }
 
-  _computeDesired(target, dist, out) {
-    const cp = Math.cos(this.pitch);
+  _computeDesired(target, dist, out, pitch = this.pitch) {
+    const cp = Math.cos(pitch);
     out.set(
       target.x - Math.sin(this.yaw) * cp * dist,
-      target.y + Math.sin(this.pitch) * dist + 0.6,
+      target.y + Math.sin(pitch) * dist + 0.6,
       target.z - Math.cos(this.yaw) * cp * dist,
     );
     return out;
+  }
+
+  /** Distance to the first bit of world between the target and `desired`. */
+  _clearDistance(target, desired, fallback) {
+    _dir.subVectors(desired, target);
+    const len = _dir.length();
+    if (len < 0.01) return fallback;
+    _dir.divideScalar(len);
+    const hit = this.collision.raycast(target, _dir, len + 0.35, _hit);
+    return hit ? Math.max(MIN_DISTANCE, hit.distance - 0.45) : fallback;
   }
 
   update(dt, player, input) {
@@ -111,22 +125,25 @@ export class FollowCamera {
 
     // --- distance: pull back when quick, tuck in when tagging ---
     const speedN = clamp(player.speed / 26, 0, 1.3);
-    let wantDist = tagging ? 4.6 : this.distance + speedN * 1.9;
-    this._computeDesired(_target, wantDist, _desired);
+    const freeDist = tagging ? 5.2 : this.distance + speedN * 1.9;
 
-    // Occlusion: keep the skater visible.
-    _dir.subVectors(_desired, _target);
-    const len = _dir.length();
-    if (len > 0.01) {
-      _dir.divideScalar(len);
-      const hit = this.collision.raycast(_target, _dir, len + 0.35, _hit);
-      if (hit) wantDist = Math.max(1.7, hit.distance - 0.45);
-    }
+    this._computeDesired(_target, freeDist, _desired);
+    let wantDist = this._clearDistance(_target, _desired, freeDist);
+
+    // Backing into a wall would otherwise leave the camera inside the skater.
+    // Lift it instead, so a tight spot becomes an overhead shot.
+    const tight = clamp(1 - wantDist / 5.0, 0, 1);
+    this.liftPitch = damp(this.liftPitch, tight * 0.62, 6, dt);
+    const pitch = clamp(this.pitch + this.liftPitch, -0.42, 1.25);
+
+    // Re-test occlusion from the lifted angle -- it usually clears the wall.
+    this._computeDesired(_target, freeDist, _desired, pitch);
+    wantDist = this._clearDistance(_target, _desired, freeDist);
 
     // Snap in fast, ease out slow, so corners do not clip the camera.
     if (wantDist < this.currentDistance) this.currentDistance = wantDist;
     else this.currentDistance = damp(this.currentDistance, wantDist, 4.5, dt);
-    this._computeDesired(_target, this.currentDistance, _desired);
+    this._computeDesired(_target, this.currentDistance, _desired, pitch);
 
     const follow = tagging ? 7 : 11 + speedN * 6;
     this.position.x = damp(this.position.x, _desired.x, follow, dt);
