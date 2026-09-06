@@ -16,6 +16,9 @@ import { Mission } from '../gameplay/Mission.js';
 import { Menus } from '../ui/Menus.js';
 import { AudioEngine } from '../audio/Audio.js';
 import { MAX_PLAYERS } from './Constants.js';
+import { AssetManager } from '../assets/AssetManager.js';
+import { MANIFEST } from '../assets/AssetManifest.js';
+import { GltfRig } from '../player/GltfRig.js';
 import { Profile } from './Profile.js';
 import { Platform } from './Platform.js';
 
@@ -30,6 +33,12 @@ export const MODE = {
 };
 
 const _v = new THREE.Vector3();
+
+// Dev only, and stripped from production builds: the asset-pipeline test needs
+// a THREE to build a fixture model with.
+if (import.meta.env && import.meta.env.DEV && typeof window !== 'undefined') {
+  window.__three = THREE;
+}
 
 export class Game {
   constructor(canvas, uiRoot) {
@@ -73,6 +82,8 @@ export class Game {
   get followCamera() { return this.slots.length ? this.slots[0].followCamera : null; }
 
   load() {
+    this.assets = new AssetManager(this.renderer.renderer);
+
     this.level = new Level().build();
     this.scene.add(this.level.group);
     if (this.level.sunDirection) this.sky.setSunDirection(this.level.sunDirection);
@@ -119,6 +130,50 @@ export class Game {
     for (const slot of this.allSlots) slot.hud.showFps = !!settings.showFps && slot.index === 0;
     this.menus.refreshPlayers();
     this.menus.setBest(this.profile.bestFor(this.playerCount));
+  }
+
+  /**
+   * Load external assets in the background and adopt anything usable.
+   *
+   * Deliberately not awaited by boot: the game is fully playable on its
+   * procedural art, and an asset that is missing, slow or broken must never be
+   * the reason nobody can skate.
+   */
+  async loadAssets() {
+    // A page opened straight off disk cannot fetch a sibling file at all --
+    // file:// has an opaque origin, so every request is a CORS failure. The
+    // single-file build is exactly that case and ships no assets anyway, so
+    // asking is pointless noise in the console.
+    if (typeof location !== 'undefined' && location.protocol === 'file:') {
+      return { loaded: 0, failed: 0, ids: [], missing: [], skipped: 'file://' };
+    }
+    try {
+      await this.assets.loadAll(MANIFEST);
+    } catch (err) {
+      console.warn('[assets] load failed', err);
+      return this.assets.summary();
+    }
+    this._adoptCharacterModels();
+    return this.assets.summary();
+  }
+
+  _adoptCharacterModels() {
+    const asset = this.assets.get('character.beat');
+    if (!asset) return;
+    if (!asset.rigged) {
+      // A raw text-to-3D export is a static mesh. It can be shown, but it
+      // cannot skate, so the procedural rudie stays until a rigged one arrives.
+      console.info('[assets] character.beat has no skeleton; keeping the procedural rig. '
+        + 'Rig and animate it (Meshy\'s rigging step, or Mixamo) to use it.');
+      return;
+    }
+    for (const slot of this.allSlots) {
+      slot.setRig(new GltfRig(asset, {
+        clips: asset.entry ? asset.entry.clips : {},
+        skinIndex: slot.index,
+      }));
+    }
+    console.info(`[assets] character.beat adopted (${asset.clipNames.length} clips)`);
   }
 
   // ------------------------------------------------------------ player slots
@@ -180,10 +235,17 @@ export class Game {
 
     e.on('player:grind:start', ({ player }) => {
       audio.play('grindStart');
-      slotFor(player).hud.banner(player.grindTrick, '#24d6ff', 0.8);
+      slotFor(player).hud.banner(player.grindTrick.name, '#24d6ff', 0.8);
     });
 
-    e.on('player:wallride:start', () => audio.play('wallride'));
+    e.on('player:wallride:start', ({ player }) => {
+      audio.play('wallride');
+      if (player.wallTrick) slotFor(player).hud.banner(player.wallTrick.name, '#ff7a1a', 0.7);
+    });
+    e.on('player:grind:stance', ({ player, trick }) => {
+      audio.play('grindStart');
+      slotFor(player).hud.banner(trick.name, '#24d6ff', 0.7);
+    });
     e.on('player:trick', () => audio.play('trick'));
     e.on('player:hit', ({ player }) => {
       audio.play('hit');

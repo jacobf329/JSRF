@@ -12,3 +12,9 @@ branch.txt
 launch_log.txt
 browser-profile/
 setup_log.txt
+
+# Character models and textures: large, binary, and better attached to a
+# release than kept in history. Drop the rule if you want one committed.
+public/assets/**
+!public/assets/README.md
+public/vendor/

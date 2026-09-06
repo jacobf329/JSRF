@@ -13,7 +13,10 @@
     "app": "npm run build && electron .",
     "app:start": "electron .",
     "app:pack": "npm run build && electron-builder --dir",
-    "app:dist": "npm run build && electron-builder"
+    "app:dist": "npm run build && electron-builder",
+    "add-model": "node scripts/add-model.mjs",
+    "inspect-model": "node scripts/inspect-model.mjs",
+    "assets:decoders": "node scripts/copy-decoders.mjs"
   },
   "dependencies": {
     "electron-updater": "^6.8.9"

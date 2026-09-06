@@ -3,6 +3,7 @@ import { SKATER as C } from './PlayerConfig.js';
 import { SURFACE } from '../world/Collision.js';
 import { RAIL_TYPE } from '../world/Rail.js';
 import { clamp, dampAngle, damp } from '../core/MathUtils.js';
+import { pickAirTrick, pickGrindTrick, pickWallTrick, directionFromInput } from './Tricks.js';
 
 export const PSTATE = {
   SKATE: 'skate',
@@ -13,15 +14,11 @@ export const PSTATE = {
   HIT: 'hit',
 };
 
-const TRICKS = [
-  { name: 'KICKFLIP', points: 220, spin: 0, flip: 1 },
-  { name: 'BACKFLIP', points: 260, spin: 0, flip: -1 },
-  { name: '360 SPIN', points: 300, spin: 1, flip: 0 },
-  { name: 'SUPERMAN', points: 340, spin: 0, flip: 0, pose: 'superman' },
-  { name: 'HANDPLANT', points: 380, spin: -1, flip: 0, pose: 'handplant' },
-];
 
-const GRIND_TRICKS = ['SOUL GRIND', 'MAKIO', 'UNITY', 'TOP ACID', 'FAHRVERGNUGEN'];
+/** Ease-out so a spin whips round early and settles, rather than crawling. */
+function ease(t) {
+  return 1 - Math.pow(1 - t, 2.2);
+}
 
 const _up = new THREE.Vector3(0, 1, 0);
 const _fwd = new THREE.Vector3();
@@ -91,16 +88,24 @@ export class Player {
     this.noRelatchTimer = 0;
     this.railSpeed = 0;
     this.grindDistance = 0;
-    this.grindTrick = GRIND_TRICKS[0];
+    this.grindTrick = pickGrindTrick(0, 0, 0);
 
     this.wallNormal = new THREE.Vector3();
+    this.wallTrick = null;
     this.wallTimer = 0;
     this.wallContact = null;
 
     this.trick = null;
     this.trickTimer = 0;
+    this.trickDuration = 1;
     this.trickSpin = 0;
     this.trickFlip = 0;
+    this.trickRoll = 0;
+    // What the rig should be shaped like right now, and how strongly.
+    this.trickPose = null;
+    this.trickPoseWeight = 0;
+    this.grindVariant = 0;
+    this.grindDirection = 'neutral';
     this.airTricks = 0;
     this.airTime = 0;
     this.peakAirTime = 0;
@@ -296,10 +301,15 @@ export class Player {
 
     this.lean = damp(this.lean, input.move.x * 0.6, 5, dt);
 
-    // Airborne tricks.
-    if (this.jumpBuffer > 0 && !this.trick && this.airTricks < C.maxAirTricks && this.airTime > 0.12) {
-      this.jumpBuffer = 0;
-      this._startTrick();
+    // Two trick buttons in the air: A throws grabs and flips, X throws spins.
+    // Spray is only ever used against a wall on the ground, so it is free here.
+    if (this.airTime > 0.1 && !this.trick && this.airTricks < C.maxAirTricks) {
+      if (this.jumpBuffer > 0) {
+        this.jumpBuffer = 0;
+        this._startTrick(input, false);
+      } else if (input.pressed('spray')) {
+        this._startTrick(input, true);
+      }
     }
   }
 
@@ -493,7 +503,9 @@ export class Player {
     this.railDir = dir;
     this.railSpeed = Math.max(C.grindMinSpeed, Math.max(speed, Math.abs(this.velocity.y) * 0.5));
     this.grindDistance = 0;
-    this.grindTrick = GRIND_TRICKS[Math.floor(Math.random() * GRIND_TRICKS.length)];
+    this.grindVariant = 0;
+    this.grindDirection = directionFromInput(input.move.x, input.move.y);
+    this.grindTrick = pickGrindTrick(input.move.x, input.move.y, 0);
     this.position.copy(hit.point);
     this.position.y -= 0.02;
     this.velocity.set(tangent.x * this.railSpeed * dir, 0, tangent.z * this.railSpeed * dir);
@@ -515,6 +527,21 @@ export class Player {
     if (throttle > 0.2) {
       const push = (_inputDir.x * _tmp.x + _inputDir.z * _tmp.z) * this.railDir;
       this.railSpeed += push * C.grindAccel * 0.8 * throttle * dt;
+    }
+
+    // Leaning a new way on the rail switches stance, and tapping the trick
+    // button cycles the variants for that direction. Both keep the combo alive.
+    const wanted = directionFromInput(input.move.x, input.move.y);
+    const cycling = input.pressed('spray');
+    if (wanted !== this.grindDirection || cycling) {
+      if (cycling) this.grindVariant++;
+      else this.grindVariant = 0;
+      this.grindDirection = wanted;
+      const next = pickGrindTrick(input.move.x, input.move.y, this.grindVariant);
+      if (next !== this.grindTrick) {
+        this.grindTrick = next;
+        this.events.emit('player:grind:stance', { player: this, trick: next });
+      }
     }
 
     this.railSpeed = clamp(this.railSpeed, 1.2, C.grindMaxSpeed);
@@ -587,6 +614,7 @@ export class Player {
     if (_fwd.x * n.x + _fwd.z * n.z > -0.15) return;
 
     this.wallNormal.copy(n).setY(0).normalize();
+    this.wallTrick = pickWallTrick(0);
     this.wallTimer = C.wallrideTime;
     // Project momentum along the wall so we keep speed.
     _tmp.copy(this.velocity);
@@ -645,29 +673,59 @@ export class Player {
 
   // ----------------------------------------------------------------- tricks
 
-  _startTrick() {
-    const trick = TRICKS[Math.floor(Math.random() * TRICKS.length)];
+  _startTrick(input, spinning) {
+    const trick = pickAirTrick(input.move.x, input.move.y, this.airTricks, spinning);
     this.trick = trick;
-    this.trickTimer = C.trickTime;
+    this.trickDuration = trick.duration || C.trickTime;
+    this.trickTimer = this.trickDuration;
     this.airTricks++;
     this.boost = Math.min(C.boostMax, this.boost + C.boostRegenTrick);
     this.events.emit('player:trick', { player: this, trick, index: this.airTricks });
   }
 
   _updateTrickAnimation(dt) {
-    if (!this.trick) {
-      this.trickSpin = damp(this.trickSpin, 0, 10, dt);
-      this.trickFlip = damp(this.trickFlip, 0, 10, dt);
+    // Grinds and wall rides hold their stance for as long as they last, rather
+    // than playing out over a fixed duration.
+    if (this.state === PSTATE.GRIND && this.grindTrick) {
+      this.trickPose = this.grindTrick.pose;
+      this.trickPoseWeight = damp(this.trickPoseWeight, 1, 9, dt);
+      this.trickSpin = damp(this.trickSpin, 0, 12, dt);
+      this.trickFlip = damp(this.trickFlip, 0, 12, dt);
+      this.trickRoll = damp(this.trickRoll, 0, 12, dt);
       return;
     }
+    if (this.state === PSTATE.WALLRIDE) {
+      this.trickPose = this.wallTrick ? this.wallTrick.pose : 'wallride';
+      this.trickPoseWeight = damp(this.trickPoseWeight, 1, 10, dt);
+      return;
+    }
+
+    if (!this.trick) {
+      this.trickPoseWeight = damp(this.trickPoseWeight, 0, 11, dt);
+      if (this.trickPoseWeight < 0.02) this.trickPose = null;
+      this.trickSpin = damp(this.trickSpin, 0, 10, dt);
+      this.trickFlip = damp(this.trickFlip, 0, 10, dt);
+      this.trickRoll = damp(this.trickRoll, 0, 10, dt);
+      return;
+    }
+
     this.trickTimer -= dt;
-    const t = 1 - clamp(this.trickTimer / C.trickTime, 0, 1);
-    this.trickSpin = this.trick.spin * Math.PI * 2 * t;
-    this.trickFlip = this.trick.flip * Math.PI * 2 * t;
+    const t = 1 - clamp(this.trickTimer / this.trickDuration, 0, 1);
+    const turn = Math.PI * 2 * ease(t);
+    this.trickSpin = this.trick.spin * turn;
+    this.trickFlip = this.trick.flip * turn;
+    this.trickRoll = this.trick.roll * turn;
+
+    // Snap into the shape, hold it, then release -- a grab that eases in and
+    // out over its whole duration never actually looks like the pose.
+    this.trickPose = this.trick.pose;
+    this.trickPoseWeight = clamp(Math.min(t / 0.16, (1 - t) / 0.24), 0, 1);
+
     if (this.trickTimer <= 0) {
       this.trick = null;
       this.trickSpin = 0;
       this.trickFlip = 0;
+      this.trickRoll = 0;
     }
   }
 

@@ -21,6 +21,15 @@ await build({
   root,
   base: './',
   logLevel: 'warn',
+  // This build inlines every dynamic import, so the compression decoders would
+  // otherwise be bundled in full -- roughly a megabyte of wasm for assets that
+  // by definition cannot exist in a single self-contained file.
+  resolve: {
+    alias: [
+      { find: /^three\/addons\/loaders\/DRACOLoader\.js$/, replacement: path.join(root, 'src/assets/stubs/NoCompression.js') },
+      { find: /^three\/addons\/loaders\/KTX2Loader\.js$/, replacement: path.join(root, 'src/assets/stubs/NoCompression.js') },
+    ],
+  },
   build: {
     outDir: stageDir,
     emptyOutDir: true,

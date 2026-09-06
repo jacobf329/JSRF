@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { toon, flat } from '../render/Materials.js';
 import { PALETTE } from '../render/Palette.js';
 import { PSTATE } from './Player.js';
+import { POSES } from './Poses.js';
 import { clamp, damp } from '../core/MathUtils.js';
 
 const SHOE = 0xf4f6ff;
@@ -110,6 +111,41 @@ export class PlayerModel {
     this.wantVisible = true;
   }
 
+  /** Lerp the current joint rotations toward a named pose by `weight`. */
+  _overlayPose(name, weight) {
+    if (!name || weight <= 0.001) return;
+    const pose = POSES[name];
+    if (!pose) return;
+    const w = Math.min(1, weight);
+    const to = (obj, axis, value) => {
+      if (value === undefined) return;
+      obj.rotation[axis] += (value - obj.rotation[axis]) * w;
+    };
+
+    if (pose.hips !== undefined) {
+      this.hips.position.y += ((0.92 - pose.hips) - this.hips.position.y) * w;
+    }
+    to(this.body, 'x', pose.spineX);
+    to(this.body, 'z', pose.spineZ);
+    to(this.neck, 'x', pose.neckX);
+
+    to(this.armL.upper, 'x', pose.armLX);
+    to(this.armL.upper, 'z', pose.armLZ);
+    to(this.armL.lower, 'x', pose.armLLower);
+    to(this.armR.upper, 'x', pose.armRX);
+    to(this.armR.upper, 'z', pose.armRZ);
+    to(this.armR.lower, 'x', pose.armRLower);
+
+    to(this.legL.thigh, 'x', pose.legLThighX);
+    to(this.legL.thigh, 'z', pose.legLThighZ);
+    to(this.legL.shin, 'x', pose.legLShin);
+    to(this.legL.foot, 'x', pose.legLFoot);
+    to(this.legR.thigh, 'x', pose.legRThighX);
+    to(this.legR.thigh, 'z', pose.legRThighZ);
+    to(this.legR.shin, 'x', pose.legRShin);
+    to(this.legR.foot, 'x', pose.legRFoot);
+  }
+
   _arm(side, JACKET, SKIN) {
     const shoulder = new THREE.Group();
     shoulder.position.set(side * 0.38, 0.78, 0);
@@ -170,9 +206,11 @@ export class PlayerModel {
     const tagging = state === PSTATE.TAG;
     const hit = state === PSTATE.HIT;
 
-    // Trick rotations.
+    // Trick rotations. Roll lives on the yaw group's child so it composes with
+    // the spin instead of fighting it.
     this.flipper.rotation.x = player.trickFlip;
     this.flipper.rotation.y = player.trickSpin;
+    this.flipper.rotation.z = player.trickRoll || 0;
 
     // Lean into turns, plus a forward crouch that grows with speed.
     const targetRoll = -player.lean * 0.42 + (wallriding ? 0.85 : 0);
@@ -240,6 +278,12 @@ export class PlayerModel {
 
     // Head steadies itself against the body pitch.
     this.neck.rotation.x = damp(this.neck.rotation.x, -this.body.rotation.x * 0.65 + (tagging ? 0.2 : 0), 8, dt);
+
+    // The trick pose goes on last, blended over whatever the locomotion
+    // animation just produced. Blending after the fact rather than folding the
+    // pose into every expression above keeps the two independent: a grab can
+    // reshape the arms without flattening the skating stride underneath it.
+    this._overlayPose(player.trickPose, player.trickPoseWeight);
 
     // Blink the whole rudie while invulnerable. The phase is offset per player
     // so a split-screen respawn does not make everyone vanish at once.

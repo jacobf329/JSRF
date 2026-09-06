@@ -9,6 +9,12 @@ const game = new Game(canvas, uiRoot);
 game.load();
 game.start();
 
+// Assets stream in behind the running game; anything usable is adopted when it
+// lands, and anything missing is simply never mentioned again.
+game.loadAssets().then((summary) => {
+  if (summary && summary.loaded) console.info('[assets]', summary);
+});
+
 // Drop the boot screen once a frame has actually been drawn, not merely when
 // the script finishes: building the district and compiling shaders is the slow
 // part, and it happens inside that first frame.

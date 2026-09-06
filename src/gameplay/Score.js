@@ -1,4 +1,5 @@
 import { clamp } from '../core/MathUtils.js';
+import { describeCombo } from '../player/Tricks.js';
 
 const COMBO_WINDOW = 2.2;
 const MAX_MULTIPLIER = 24;
@@ -31,6 +32,7 @@ export class Score {
     this.multiplier = 0;
     this.comboTimer = 0;
     this.comboLabel = '';
+    this.comboTricks = [];
     this.comboActive = false;
     this.bestCombo = 0;
     this.tagsDone = 0;
@@ -50,13 +52,18 @@ export class Score {
   _bind() {
     const e = this.events;
     const mine = (fn) => (payload) => { if (this._mine(payload)) fn(payload); };
-    e.on('player:grind:tick', mine(({ distance }) => {
+    e.on('player:grind:tick', mine(({ distance, player }) => {
       this.grindMetres += distance;
-      this._add(distance * RATES.grindPerMetre, null, false);
+      // Fancier stances are worth more per metre, so holding a hard grind
+      // through a long rail actually pays.
+      const rate = player.grindTrick ? player.grindTrick.points : RATES.grindPerMetre;
+      this._add(distance * rate, null, false);
     }));
     e.on('player:grind:start', mine(({ player }) => {
-      this._chain(player.grindTrick || 'GRIND');
+      this._chain(player.grindTrick ? player.grindTrick.name : 'GRIND');
     }));
+    // Switching stance mid-rail extends the chain rather than restarting it.
+    e.on('player:grind:stance', mine(({ trick }) => this._chain(trick.name)));
     e.on('player:grind:end', mine(({ distance }) => {
       if (distance > 4) this._add(distance * 2, null, false);
     }));
@@ -93,6 +100,8 @@ export class Score {
     this.multiplier = Math.min(MAX_MULTIPLIER, this.multiplier + 1);
     this.comboTimer = COMBO_WINDOW;
     this.comboLabel = label;
+    // Repeating the same stance should not stutter the readout.
+    if (this.comboTricks[this.comboTricks.length - 1] !== label) this.comboTricks.push(label);
     this.lastEvent = label;
     if (points) this.combo += points;
     this.events.emit('score:chain', { label, points, multiplier: this.multiplier, player: this.player });
@@ -121,6 +130,7 @@ export class Score {
     this.multiplier = 0;
     this.comboActive = false;
     this.comboLabel = '';
+    this.comboTricks = [];
     this.comboTimer = 0;
     payload.player = this.player;
     if (gained > 0) this.events.emit('score:bank', payload);
@@ -137,6 +147,7 @@ export class Score {
     this.comboActive = false;
     this.comboTimer = 0;
     this.comboLabel = '';
+    this.comboTricks = [];
     this.events.emit('score:break', { gained, player: this.player });
   }
 
@@ -158,12 +169,18 @@ export class Score {
     this.multiplier = 0;
     this.comboTimer = 0;
     this.comboLabel = '';
+    this.comboTricks = [];
     this.comboActive = false;
     this.bestCombo = 0;
     this.tagsDone = 0;
     this.tricksDone = 0;
     this.grindMetres = 0;
     this.airTimeTotal = 0;
+  }
+
+  /** The chain as it reads on the HUD: "METHOD AIR to 540 SPIN to SOUL GRIND". */
+  get comboText() {
+    return describeCombo(this.comboTricks) || this.comboLabel || 'COMBO';
   }
 
   get comboPreview() {

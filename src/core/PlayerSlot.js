@@ -17,6 +17,7 @@ export class PlayerSlot {
     this.color = skin.jacket;
     this.colorHex = `#${new THREE.Color(skin.jacket).getHexString()}`;
 
+    this.scene = scene;
     this.player = new Player(level, events, { index, name: skin.name, color: skin.jacket });
     this.model = new PlayerModel(index);
     scene.add(this.model.root);
@@ -48,6 +49,25 @@ export class PlayerSlot {
 
   setInput(input) {
     this.input = input;
+  }
+
+  /**
+   * Swap the visual rig, keeping everything else about the seat.
+   *
+   * Assets load after the game is already running, so the procedural rudie
+   * plays until a model turns up and is then replaced in place -- nothing else
+   * in the slot, the camera or the HUD notices.
+   */
+  setRig(rig) {
+    if (!rig || rig === this.model) return;
+    const previous = this.model;
+    this.scene.add(rig.root);
+    rig.root.visible = previous ? previous.root.visible : true;
+    this.model = rig;
+    if (previous) {
+      this.scene.remove(previous.root);
+      if (previous.dispose) previous.dispose();
+    }
   }
 
   setRect(rect, playerCount) {

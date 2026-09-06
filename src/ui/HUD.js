@@ -222,7 +222,7 @@ export class HUD {
 
     if (score.comboActive) {
       this.$combo.classList.add('is-on');
-      this.$comboLabel.textContent = score.comboLabel || 'COMBO';
+      this.$comboLabel.textContent = score.comboText;
       this.$comboPoints.textContent = formatScore(score.combo);
       this.$comboMult.textContent = `x${Math.max(1, score.multiplier)}`;
       this.$comboFill.style.transform = `scaleX(${score.comboFraction})`;

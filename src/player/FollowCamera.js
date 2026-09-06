@@ -27,6 +27,7 @@ export class FollowCamera {
     this.height = 1.55;
     this.currentDistance = this.distance;
     this.liftPitch = 0;
+    this.trickPunch = 0;
 
     this.position = new THREE.Vector3();
     this.lookAt = new THREE.Vector3();
@@ -131,7 +132,14 @@ export class FollowCamera {
 
     // --- distance: pull back when quick, tuck in when tagging ---
     const speedN = clamp(player.speed / 26, 0, 1.3);
-    const freeDist = tagging ? 5.2 : this.distance + speedN * 1.9;
+    // Push in and widen the lens while a trick is out. A trick thrown at normal
+    // chase distance is a small figure doing something clever in the middle of
+    // the screen; half of what sells one is the camera reacting to it.
+    const tricking = !!player.trick && player.state === PSTATE.AIR;
+    this.trickPunch = damp(this.trickPunch, tricking ? 1 : 0, tricking ? 11 : 4, dt);
+    const freeDist = tagging
+      ? 5.2
+      : this.distance + speedN * 1.9 - this.trickPunch * 2.4;
 
     this._computeDesired(_target, freeDist, _desired);
     let wantDist = this._clearDistance(_target, _desired, freeDist);
@@ -175,7 +183,7 @@ export class FollowCamera {
 
     // --- speed FOV ---
     const boostKick = player.boosting ? 8 : 0;
-    const targetFov = this.baseFov + speedN * 12 + boostKick;
+    const targetFov = this.baseFov + speedN * 12 + boostKick + this.trickPunch * 7;
     this.camera.fov = damp(this.camera.fov, targetFov, 5, dt);
     this.camera.updateProjectionMatrix();
   }

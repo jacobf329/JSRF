@@ -113,6 +113,19 @@ shared — the run ends when the last one is painted and the highest score wins.
   up may be gone before you reach it. Solo, a bust pauses the run; with company
   it just costs you 20% of your score and you are back on your feet.
 
+## Assets
+
+Everything you see is generated from code — no model, texture or audio files.
+To replace any of it with real assets, see **[`docs/ASSETS.md`](docs/ASSETS.md)**:
+
+```bash
+npm run add-model -- ~/Downloads/character.glb   # copy in and check
+npm run inspect-model -- public/assets/characters/character.glb
+```
+
+The game adopts a model only if it has a skeleton and clips, and otherwise
+keeps the procedural rudie — so a missing or unrigged asset is never a crash.
+
 ## Architecture
 
 ```
@@ -160,6 +173,14 @@ solids inside a couple of hundred draw calls.
 **`player/Player.js`** is a small state machine — skate, air, grind, wall ride, tag,
 hit — over a shared momentum integrator, with coyote time, jump buffering and
 ground snapping so stairs don't launch you.
+
+**`player/Tricks.js`** is the trick catalogue — 43 of them, chosen by the
+direction held when the button goes down, with repeated presses stepping
+through the variants for that direction so a long air is a different string
+every time. Each names a pose in `player/Poses.js` and a clip name a rigged
+model may provide; the procedural rig blends the pose over the locomotion
+animation, so a grab reshapes the arms without flattening the skating stride
+underneath it.
 
 **`gameplay/TagArt.js`** draws each piece of graffiti to a canvas from scratch:
 bubble letters with wobble, drips, splatter and a backdrop blob. The decal reveals
