@@ -13,6 +13,10 @@ param(
 $ErrorActionPreference = 'Stop'
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { }
 
+# Same reason as Expand-Zip below: on Windows PowerShell 5.1 the progress bar is
+# redrawn synchronously and can dominate the runtime of a web request entirely.
+$ProgressPreference = 'SilentlyContinue'
+
 $Owner = 'jacobf329'
 $Repo = 'JSRF'
 $Branch = 'claude/jet-set-radio-future-hd1kfg'
@@ -23,6 +27,19 @@ Write-Host "  --------------------------------"
 Write-Host ""
 Write-Host "  Installing to: $InstallDir"
 Write-Host ""
+
+function Expand-Zip($zip, $destination) {
+	# Expand-Archive on Windows PowerShell 5.1 redraws a progress bar for every
+	# entry, which turns a two-second unpack into a minute-long stall that looks
+	# like a hang. The .NET call underneath it does not.
+	try {
+		Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
+		[System.IO.Compression.ZipFile]::ExtractToDirectory($zip, $destination)
+	}
+	catch {
+		Expand-Archive -LiteralPath $zip -DestinationPath $destination -Force
+	}
+}
 
 $temp = Join-Path ([IO.Path]::GetTempPath()) ("jsrf_install_" + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temp -Force | Out-Null
@@ -35,7 +52,7 @@ try {
 		-Headers @{ 'User-Agent' = 'JSRF-Installer' } -OutFile $zip -TimeoutSec 300 -UseBasicParsing
 
 	Write-Host "  Unpacking..."
-	Expand-Archive -LiteralPath $zip -DestinationPath $temp -Force
+	Expand-Zip $zip $temp
 	$source = Get-ChildItem -LiteralPath $temp -Directory | Select-Object -First 1
 	if (-not $source) { throw 'the download did not contain a game folder' }
 
@@ -44,6 +61,7 @@ try {
 		throw 'the download did not contain a usable game file'
 	}
 
+	Write-Host "  Installing..."
 	if (-not (Test-Path -LiteralPath $InstallDir)) {
 		New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 	}
