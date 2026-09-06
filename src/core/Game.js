@@ -139,11 +139,22 @@ export class Game {
     for (let i = 0; i < this.allSlots.length; i++) this.allSlots[i].setVisible(i < n);
     this.slots = this.allSlots.slice(0, n);
 
-    const sources = this.input.assign(n);
-    for (let i = 0; i < n; i++) this.slots[i].setInput(sources[i]);
-
+    this._refreshDevices();
     this.mission.setSlots(this.slots);
     this.resize();
+  }
+
+  /**
+   * Hand each seat its device.
+   *
+   * Called again whenever the answer could have changed -- a pad plugged in, a
+   * different device pressing a button, a run starting -- because assignment at
+   * load time happens before a single gamepad poll, and would otherwise leave
+   * somebody holding a controller in seat two behind an idle keyboard.
+   */
+  _refreshDevices() {
+    const sources = this.input.assign(this.playerCount);
+    for (let i = 0; i < this.slots.length; i++) this.slots[i].setInput(sources[i]);
   }
 
   // -------------------------------------------------------- feedback glue
@@ -263,6 +274,7 @@ export class Game {
   }
 
   restart() {
+    this._refreshDevices();
     this.graffiti.reset();
     this.pickups.reset();
     this.police.reset();
@@ -339,11 +351,36 @@ export class Game {
       else if (this.mode === MODE.PAUSED) this.setMode(MODE.PLAYING);
     }
 
-    if (this.mode === MODE.PLAYING) this.updatePlaying(dt);
-    else this.updateIdle(dt);
+    if (this.mode === MODE.PLAYING) {
+      this.updatePlaying(dt);
+    } else {
+      this._updateMenuInput(dt);
+      this.updateIdle(dt);
+    }
 
     this.render(dt);
     this.input.endFrame();
+  }
+
+  /**
+   * Menus are driven from any device. Nothing here needs a keyboard or a
+   * mouse: steer with the stick or the d-pad, A confirms, B goes back, Start
+   * pauses and unpauses.
+   */
+  _updateMenuInput(dt) {
+    // Devices first: the press that confirms is also the press that says who
+    // is player one, so it has to be accounted for before the menu acts on it.
+    const active = this.input.lastActive;
+    if (active && active !== this._lastMenuDevice) {
+      this._lastMenuDevice = active;
+      this._refreshDevices();
+      if (this.mode === MODE.TITLE) this.menus.refreshPlayers();
+    }
+
+    const nav = this.input.menuDirection(dt);
+    if (nav.x || nav.y) this.menus.moveFocus(nav);
+    if (this.input.anyConfirm()) this.menus.activateFocused();
+    else if (this.input.anyBack()) this.menus.back();
   }
 
   updatePlaying(dt) {

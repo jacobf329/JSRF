@@ -98,8 +98,14 @@ export class FollowCamera {
       const speed = player.groundSpeed;
       if (this.manualTimer <= 0 && speed > 4) {
         const moveYaw = Math.atan2(player.velocity.x, player.velocity.z);
-        const rate = clamp(speed / 16, 0, 1) * 2.6;
-        this.yaw = dampAngle(this.yaw, moveYaw, rate, dt);
+        // Input is camera-relative and the camera chases the direction of
+        // travel, so a hard turn feeds itself: the camera swings, which
+        // rotates the input frame, which turns harder. Backing the alignment
+        // off while the stick is pushed sideways breaks that loop, and it
+        // snaps back to normal the moment the player stops steering.
+        const lateral = Math.min(1, Math.abs(input.move.x));
+        const rate = clamp(speed / 16, 0, 1) * 2.1 * (1 - lateral * 0.75);
+        if (rate > 0.01) this.yaw = dampAngle(this.yaw, moveYaw, rate, dt);
       }
       if (input.pressed('camReset')) {
         this.yaw = player.heading;

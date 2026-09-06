@@ -550,12 +550,14 @@ export class Level {
     const V = (x, y, z) => new THREE.Vector3(x, y, z);
     const half = BOWL.half;
 
-    // 1. Bowl rim -- a closed circuit right around the square.
+    // 1. Bowl rim -- a closed circuit right around the square. Rails sit a
+    //    little clear of the kerb or ledge they follow: flush with it, landing
+    //    on the surface beats catching the rail every time.
     this._addRail([
-      V(-half - 0.5, 0.62, -half - 0.5),
-      V(half + 0.5, 0.62, -half - 0.5),
-      V(half + 0.5, 0.62, half + 0.5),
-      V(-half - 0.5, 0.62, half + 0.5),
+      V(-half - 0.5, 0.82, -half - 0.5),
+      V(half + 0.5, 0.82, -half - 0.5),
+      V(half + 0.5, 0.82, half + 0.5),
+      V(-half - 0.5, 0.82, half + 0.5),
     ], { type: RAIL_TYPE.LEDGE, closed: true, curved: false, name: 'bowl-rim' });
 
     // 2. Monument ring inside the bowl.
@@ -587,14 +589,14 @@ export class Level {
     for (const p of this.planters) {
       const along = p.w > p.d ? 'x' : 'z';
       const len = (along === 'x' ? p.w : p.d) / 2 - 0.2;
-      const a = V(p.x - (along === 'x' ? len : 0), 1.16, p.z - (along === 'z' ? len : 0));
-      const b = V(p.x + (along === 'x' ? len : 0), 1.16, p.z + (along === 'z' ? len : 0));
+      const a = V(p.x - (along === 'x' ? len : 0), 1.48, p.z - (along === 'z' ? len : 0));
+      const b = V(p.x + (along === 'x' ? len : 0), 1.48, p.z + (along === 'z' ? len : 0));
       this._addRail([a, b], { type: RAIL_TYPE.LEDGE, curved: false, name: 'planter' });
     }
 
     // 5. Rooftop parapets.
     for (const s of BUILDINGS) {
-      const y = s.h + 1.05;
+      const y = s.h + 1.28;
       const hw = s.w / 2 - 0.3;
       const hd = s.d / 2 - 0.3;
       this._addRail([
@@ -636,8 +638,8 @@ export class Level {
     // 7. Expressway barrier rails.
     for (const side of [-1, 1]) {
       this._addRail([
-        V(EXPRESSWAY_X + side * 6.6, EXPRESSWAY_Y + 1.55, -HALF + 6),
-        V(EXPRESSWAY_X + side * 6.6, EXPRESSWAY_Y + 1.55, HALF - 30),
+        V(EXPRESSWAY_X + side * 6.6, EXPRESSWAY_Y + 1.72, -HALF + 6),
+        V(EXPRESSWAY_X + side * 6.6, EXPRESSWAY_Y + 1.72, HALF - 30),
       ], { type: RAIL_TYPE.LEDGE, curved: false, name: 'expressway' });
     }
 
@@ -653,10 +655,10 @@ export class Level {
     this._addRail([V(33, 1.05, -30), V(33, 1.05, 30)], { type: RAIL_TYPE.RAIL, curved: false });
 
     // 10. Kerb rails running the length of the avenues.
-    this._addRail([V(-95, 0.62, -40.2), V(95, 0.62, -40.2)], { type: RAIL_TYPE.LEDGE, curved: false });
-    this._addRail([V(95, 0.62, 42.2), V(-95, 0.62, 42.2)], { type: RAIL_TYPE.LEDGE, curved: false });
-    this._addRail([V(-51.5, 0.62, 40), V(-51.5, 0.62, -38)], { type: RAIL_TYPE.LEDGE, curved: false });
-    this._addRail([V(51.5, 0.62, -38), V(51.5, 0.62, 40)], { type: RAIL_TYPE.LEDGE, curved: false });
+    this._addRail([V(-95, 0.82, -40.2), V(95, 0.82, -40.2)], { type: RAIL_TYPE.LEDGE, curved: false });
+    this._addRail([V(95, 0.82, 42.2), V(-95, 0.82, 42.2)], { type: RAIL_TYPE.LEDGE, curved: false });
+    this._addRail([V(-51.5, 0.82, 40), V(-51.5, 0.82, -38)], { type: RAIL_TYPE.LEDGE, curved: false });
+    this._addRail([V(51.5, 0.82, -38), V(51.5, 0.82, 40)], { type: RAIL_TYPE.LEDGE, curved: false });
   }
 
   // ------------------------------------------------------------- gameplay pts

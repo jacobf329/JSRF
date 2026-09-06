@@ -1,14 +1,16 @@
 import { formatScore, formatTime } from '../core/MathUtils.js';
 import { MAX_PLAYERS } from '../core/Constants.js';
 
+// Gamepad first: it is how this is meant to be played.
 const CONTROLS = [
-  ['WASD / Left stick', 'Skate'],
-  ['Space / A', 'Jump &mdash; press again in the air for a trick'],
-  ['Shift / RT', 'Boost'],
-  ['E / X', 'Tag a wall, then match the arrows'],
-  ['Mouse / Right stick', 'Look around'],
-  ['C / B', 'Snap the camera behind you'],
-  ['Esc / Start', 'Pause'],
+  ['Left stick', 'Skate'],
+  ['A', 'Jump &mdash; press again in the air for a trick'],
+  ['RT / RB', 'Boost'],
+  ['X', 'Tag a wall, then match the arrows'],
+  ['Right stick', 'Look around'],
+  ['Y', 'Snap the camera behind you'],
+  ['Start', 'Pause'],
+  ['Keyboard', 'WASD, Space, Shift, E, mouse'],
 ];
 
 function controlsMarkup() {
@@ -95,9 +97,60 @@ export class Menus {
       this.onAction?.(btn.dataset.action, value);
     });
 
+    // Pointer users and pad users share one notion of "the focused control",
+    // so hovering and steering never disagree about what A will press.
+    this.el.addEventListener('mousemove', (ev) => {
+      const btn = ev.target.closest('[data-action]');
+      if (!btn) return;
+      const index = this.focusables().indexOf(btn);
+      if (index >= 0) this.setFocus(index);
+    });
+
     this.current = null;
     this.onAction = null;
+    this.focusIndex = 0;
     this.refreshPlayers();
+  }
+
+  // --------------------------------------------------------------- focus
+
+  /** Every control on the visible screen, in reading order. */
+  focusables() {
+    const screen = this.current ? this.screens[this.current] : null;
+    if (!screen) return [];
+    return Array.from(screen.querySelectorAll('[data-action]'));
+  }
+
+  setFocus(index) {
+    const items = this.focusables();
+    if (!items.length) return;
+    this.focusIndex = ((index % items.length) + items.length) % items.length;
+    items.forEach((el, i) => el.classList.toggle('is-focused', i === this.focusIndex));
+  }
+
+  /**
+   * Menu movement. The controls are a flat list, so up/left step back and
+   * down/right step forward -- which makes the player-count row read exactly
+   * as it looks without needing a grid model.
+   */
+  moveFocus({ x = 0, y = 0 }) {
+    if (!x && !y) return;
+    const step = (x || 0) - (y || 0);   // stick up is +y, and up means back
+    if (!step) return;
+    this.setFocus(this.focusIndex + Math.sign(step));
+  }
+
+  activateFocused() {
+    const items = this.focusables();
+    const el = items[this.focusIndex];
+    if (!el) return;
+    const value = el.dataset.value !== undefined ? Number(el.dataset.value) : undefined;
+    this.onAction?.(el.dataset.action, value);
+  }
+
+  /** B / Escape: resume from the pause screen, ignored elsewhere. */
+  back() {
+    if (this.current === 'pause') this.onAction?.('resume');
   }
 
   /** The record for the current player count, or nothing if there isn't one. */
@@ -118,8 +171,11 @@ export class Menus {
         <b>P${a.player}</b> ${a.label}
       </div>`).join('');
     const pads = this.game.input.padCount;
-    if (count > 2 && pads < count - 1) {
-      this.$devices.innerHTML += `<div class="picker__warn">Plug in ${count - 1 - pads} more gamepad${count - 1 - pads > 1 ? 's' : ''} to fill every seat</div>`;
+    const short = count - pads - 2;   // pads, plus the two keyboard schemes
+    if (short > 0) {
+      this.$devices.innerHTML += `<div class="picker__warn">Plug in ${short} more gamepad${short > 1 ? 's' : ''} to fill every seat</div>`;
+    } else if (pads === 0) {
+      this.$devices.innerHTML += '<div class="picker__warn">No gamepad detected &mdash; plug one in and press a button</div>';
     }
   }
 
@@ -129,6 +185,13 @@ export class Menus {
     }
     if (name === 'title') this.refreshPlayers();
     this.current = name;
+
+    // Land on the action somebody most likely wants, so a single press of A
+    // does the obvious thing on every screen.
+    const items = this.focusables();
+    const preferred = { title: 'start', pause: 'resume', busted: 'continue', results: 'restart' }[name];
+    const index = items.findIndex((el) => el.dataset.action === preferred);
+    this.setFocus(index >= 0 ? index : 0);
   }
 
   hide() {

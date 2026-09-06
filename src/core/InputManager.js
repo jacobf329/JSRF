@@ -32,18 +32,25 @@ const SCHEME_SECONDARY = {
   NumpadEnter: 'confirm',
 };
 
-// Standard gamepad mapping.
+// Standard gamepad mapping. A button can drive more than one action: A is
+// jump in play and confirm in menus, and the two never overlap.
 const PAD_BUTTONS = {
-  0: 'jump',
-  1: 'back',
-  2: 'spray',
-  3: 'camReset',
-  5: 'boost',
-  7: 'boost',
-  9: 'pause',
-  8: 'confirm',
-  12: 'up', 13: 'down', 14: 'left', 15: 'right',
+  0: ['jump', 'confirm'],
+  1: ['back'],
+  2: ['spray'],
+  3: ['camReset'],
+  4: ['camLeft'],
+  5: ['boost'],
+  6: ['camRight'],
+  7: ['boost'],
+  8: ['back'],
+  9: ['pause'],
+  12: ['up'], 13: ['down'], 14: ['left'], 15: ['right'],
 };
+
+// How far a trigger has to travel to count as held, for pads that report the
+// shoulders as analog axes rather than buttons.
+const TRIGGER_THRESHOLD = 0.3;
 
 function applyDeadzone(x, y, dz) {
   const mag = Math.hypot(x, y);
@@ -76,7 +83,10 @@ export class InputSource {
   pressedRaw(action) { return this.pressedThisFrame.has(action); }
 
   _press(action) {
-    if (!this.actions.has(action)) this.pressedThisFrame.add(action);
+    if (!this.actions.has(action)) {
+      this.pressedThisFrame.add(action);
+      if (this.onActivity) this.onActivity(this);
+    }
     this.actions.add(action);
   }
 
@@ -152,14 +162,22 @@ class GamepadSource extends InputSource {
     const stick = applyDeadzone(pad.axes[0] ?? 0, -(pad.axes[1] ?? 0), this.deadzone);
     const rstick = applyDeadzone(pad.axes[2] ?? 0, pad.axes[3] ?? 0, this.deadzone);
 
-    for (const [index, action] of Object.entries(PAD_BUTTONS)) {
+    // Boost is resolved first so an analog trigger and a digital bumper cannot
+    // fight over it frame by frame.
+    let boost = false;
+    for (const index of [5, 7]) {
+      const btn = pad.buttons[index];
+      if (btn && (btn.pressed || btn.value > TRIGGER_THRESHOLD)) boost = true;
+    }
+    for (const [index, actions] of Object.entries(PAD_BUTTONS)) {
       const btn = pad.buttons[Number(index)];
       if (!btn) continue;
-      if (btn.pressed) this._press(action); else this._release(action);
+      for (const action of actions) {
+        if (action === 'boost') continue;
+        if (btn.pressed) this._press(action); else this._release(action);
+      }
     }
-    // Analog triggers double as boost on pads without digital shoulder buttons.
-    const rt = pad.buttons[7];
-    if (rt && rt.value > 0.35) this._press('boost');
+    if (boost) this._press('boost'); else this._release('boost');
 
     if (stick.mag > 0) {
       this.move.x = stick.x;
@@ -191,6 +209,17 @@ export class InputManager {
     this.keyboards = [this.keyboardPrimary, this.keyboardSecondary];
     this.gamepadSources = [];
     this.sources = [...this.keyboards];
+
+    // Whoever last pressed something gets seat one. Pick up a pad, press A,
+    // and you are player 1 -- no settings screen for it.
+    this.lastActive = null;
+    const noteActivity = (source) => { this.lastActive = source; };
+    for (const source of this.sources) source.onActivity = noteActivity;
+    this._noteActivity = noteActivity;
+
+    // Edge state for driving menus from a stick.
+    this._navLatch = { x: 0, y: 0 };
+    this._navRepeat = 0;
 
     this._onKeyDown = (e) => {
       if (e.code === 'Space' || e.code === 'Tab') e.preventDefault();
@@ -244,27 +273,83 @@ export class InputManager {
   }
 
   /**
-   * Devices for `count` players: keyboard first, then each connected pad,
-   * then the second keyboard scheme as a stand-in for player 2.
+   * Devices for `count` players, in seat order.
+   *
+   * Gamepads come first: this is a couch game, and somebody holding a pad
+   * should not find themselves on seat three behind a keyboard nobody is
+   * using. Whichever device was last touched takes seat one, so picking up a
+   * controller and pressing A is all it takes to be player 1.
    */
   assign(count) {
-    const out = [this.keyboardPrimary];
-    let padCursor = 0;
-    for (let i = 1; i < count; i++) {
-      if (padCursor < this.gamepadSources.length) {
-        out.push(this.gamepadSources[padCursor++]);
-      } else if (!out.includes(this.keyboardSecondary)) {
-        out.push(this.keyboardSecondary);
-      } else {
-        // Nothing left to drive this slot -- hand back a dead source so the
-        // caller can show "no controller" rather than crash.
-        const dead = new InputSource(`none${i}`, 'No controller');
-        dead.connected = false;
-        out.push(dead);
-      }
+    const pads = this.gamepadSources.filter((s) => s.connected);
+    const pool = [...pads, this.keyboardPrimary, this.keyboardSecondary];
+
+    const last = this.lastActive;
+    if (last && pool.includes(last)) {
+      pool.splice(pool.indexOf(last), 1);
+      pool.unshift(last);
+    }
+
+    const out = [];
+    for (let i = 0; i < count; i++) {
+      if (i < pool.length) { out.push(pool[i]); continue; }
+      // Nothing left to drive this seat -- hand back a dead source so the
+      // caller can show "no controller" rather than crash.
+      const dead = new InputSource(`none${i}`, 'No controller');
+      dead.connected = false;
+      out.push(dead);
     }
     return out;
   }
+
+  /**
+   * Menu movement from any device: d-pad and arrow presses are edge-triggered,
+   * a held stick repeats. Returns -1, 0 or 1 on each axis.
+   */
+  menuDirection(dt) {
+    let x = 0;
+    let y = 0;
+    for (const s of this.sources) {
+      if (s.pressedRaw('right')) x = 1;
+      else if (s.pressedRaw('left')) x = -1;
+      if (s.pressedRaw('down')) y = -1;
+      else if (s.pressedRaw('up')) y = 1;
+    }
+    if (x || y) { this._navRepeat = 0.42; return { x, y }; }
+
+    let ax = 0;
+    let ay = 0;
+    for (const s of this.sources) {
+      if (Math.abs(s.move.x) > Math.abs(ax)) ax = s.move.x;
+      if (Math.abs(s.move.y) > Math.abs(ay)) ay = s.move.y;
+    }
+    const dx = Math.abs(ax) > 0.6 ? Math.sign(ax) : 0;
+    const dy = Math.abs(ay) > 0.6 ? Math.sign(ay) : 0;
+
+    if (dx === 0 && dy === 0) {
+      this._navLatch.x = 0;
+      this._navLatch.y = 0;
+      this._navRepeat = 0;
+      return { x: 0, y: 0 };
+    }
+
+    const changed = dx !== this._navLatch.x || dy !== this._navLatch.y;
+    this._navRepeat -= dt;
+    if (changed || this._navRepeat <= 0) {
+      this._navLatch.x = dx;
+      this._navLatch.y = dy;
+      this._navRepeat = changed ? 0.42 : 0.14;
+      return { x: dx, y: dy };
+    }
+    return { x: 0, y: 0 };
+  }
+
+  /** True if any device confirmed -- A on a pad, Space or Enter on a keyboard. */
+  anyConfirm() {
+    return this.anyPressed('confirm') || this.anyPressed('jump');
+  }
+
+  anyBack() { return this.anyPressed('back'); }
 
   /** Pretty labels for the player-select screen, in assignment order. */
   describeAssignment(count) {
@@ -293,6 +378,7 @@ export class InputManager {
       while (this.gamepadSources.length < this.pads.length) {
         const i = this.gamepadSources.length;
         const src = new GamepadSource(`pad${i}`, `Gamepad ${i + 1}`, i);
+        src.onActivity = this._noteActivity;
         this.gamepadSources.push(src);
         this.sources.push(src);
       }

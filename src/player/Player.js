@@ -32,6 +32,7 @@ const _hv = new THREE.Vector3();
 const _inputDir = new THREE.Vector3();
 const _rayDir = new THREE.Vector3(0, -1, 0);
 const _hit = { point: new THREE.Vector3(), normal: new THREE.Vector3(), distance: 0, surface: 0 };
+const _tangent = new THREE.Vector3();
 
 /**
  * Momentum skater with a small state machine: skate -> air -> grind /
@@ -82,6 +83,12 @@ export class Player {
     this.rail = null;
     this.railDist = 0;
     this.railDir = 1;
+    // Hopping off a rail used to drop you straight back onto it: you leave
+    // moving along the rail, so you are still directly above it when the
+    // cooldown ends. Several rails are closed loops, so that read as "you can
+    // never get off".
+    this.noRelatchRail = null;
+    this.noRelatchTimer = 0;
     this.railSpeed = 0;
     this.grindDistance = 0;
     this.grindTrick = GRIND_TRICKS[0];
@@ -129,6 +136,8 @@ export class Player {
     this.cameraYaw = cameraYaw;
     this.invulnerable = Math.max(0, this.invulnerable - dt);
     this.grindCooldown = Math.max(0, this.grindCooldown - dt);
+    this.noRelatchTimer = Math.max(0, this.noRelatchTimer - dt);
+    if (this.noRelatchTimer <= 0) this.noRelatchRail = null;
     this.wallrideCooldown = Math.max(0, this.wallrideCooldown - dt);
     this.jumpBuffer = Math.max(0, this.jumpBuffer - dt);
     if (input.pressed('jump')) this.jumpBuffer = C.jumpBufferTime;
@@ -165,14 +174,20 @@ export class Player {
     }
   }
 
-  /** Camera-relative input direction on the XZ plane. */
+  /**
+   * Camera-relative input direction on the XZ plane.
+   *
+   * The chase camera sits at `target - (sin yaw, cos yaw) * distance`, so it
+   * looks along forward = (sin yaw, 0, cos yaw). Facing that way with Y up,
+   * screen-right is (-cos yaw, 0, sin yaw) -- the opposite of what a naive
+   * rotation gives, which is why pushing right used to send you left.
+   */
   _inputWorldDir(input, out) {
     const s = Math.sin(this.cameraYaw);
     const c = Math.cos(this.cameraYaw);
     const ix = input.move.x;
     const iz = input.move.y;
-    // Forward on screen is -Z rotated by the camera yaw.
-    out.set(ix * c + iz * s, 0, -ix * s + iz * c);
+    out.set(iz * s - ix * c, 0, iz * c + ix * s);
     return out;
   }
 
@@ -195,7 +210,7 @@ export class Player {
     if (this.grounded) this._groundMove(dt, input, throttle);
     else this._airMove(dt, input, throttle);
 
-    this._integrate(dt);
+    if (this._integrate(dt, input)) return;   // caught a rail mid-flight
     this._postMove(dt, input);
   }
 
@@ -252,7 +267,7 @@ export class Player {
     // Follow the slope instead of launching off every bump.
     if (n.y > 0.2) this.velocity.y = -(n.x * _hv.x + n.z * _hv.z) / n.y;
 
-    this.lean = damp(this.lean, clamp(-input.move.x * clamp(speed / C.maxSpeed, 0, 1), -1, 1), 8, dt);
+    this.lean = damp(this.lean, clamp(input.move.x * clamp(speed / C.maxSpeed, 0, 1), -1, 1), 8, dt);
 
     if (this.jumpBuffer > 0) this._jump();
   }
@@ -279,7 +294,7 @@ export class Player {
     this.velocity.z *= drag;
     this.velocity.y = Math.max(this.velocity.y, -C.terminalVelocity);
 
-    this.lean = damp(this.lean, -input.move.x * 0.6, 5, dt);
+    this.lean = damp(this.lean, input.move.x * 0.6, 5, dt);
 
     // Airborne tricks.
     if (this.jumpBuffer > 0 && !this.trick && this.airTricks < C.maxAirTricks && this.airTime > 0.12) {
@@ -305,7 +320,18 @@ export class Player {
 
   // -------------------------------------------------------------- integrate
 
-  _integrate(dt) {
+  /**
+   * Advance and depenetrate, sub-stepped so nothing tunnels at speed.
+   *
+   * When `input` is given and the skater is airborne, each sub-step also looks
+   * for a rail. Testing once per frame instead meant a fast fall crossed the
+   * rail and landed in the same frame, and the ground always won -- which is
+   * why rails that sit close above a kerb or ledge could not be caught at all.
+   *
+   * Returns true if a rail was caught, in which case the caller must not carry
+   * on with its own post-move handling.
+   */
+  _integrate(dt, input = null) {
     const speed = this.velocity.length();
     const steps = clamp(Math.ceil((speed * dt) / 0.22), 1, 8);
     const sub = dt / steps;
@@ -319,6 +345,7 @@ export class Player {
     for (let i = 0; i < steps; i++) {
       this.position.addScaledVector(this.velocity, sub);
       const contacts = this.collision.resolveCapsule(this.position, C.radius, C.height);
+      let stepGrounded = false;
       for (let c = 0; c < contacts.length; c++) {
         const contact = contacts[c];
         const n = contact.normal;
@@ -326,6 +353,7 @@ export class Player {
         if (vn < 0) this.velocity.addScaledVector(n, -vn);
         if (n.y > 0.5) {
           grounded = true;
+          stepGrounded = true;
           this.groundNormal.add(n);
           groundSurface = contact.surface;
         } else if (Math.abs(n.y) < 0.65) {
@@ -338,6 +366,13 @@ export class Player {
           }
         }
       }
+
+      // Only from a genuine airborne state, so skating past a kerb rail never
+      // snatches the player onto it.
+      if (input && !stepGrounded && this.state === PSTATE.AIR) {
+        this._tryGrind(input);
+        if (this.state === PSTATE.GRIND) return true;
+      }
     }
 
     if (grounded) {
@@ -347,10 +382,19 @@ export class Player {
       this.groundNormal.set(0, 1, 0);
     }
     this.grounded = grounded;
+    return false;
   }
 
   _postMove(dt, input) {
     const wasAir = this.state === PSTATE.AIR;
+
+    // Look for a rail before accepting a ground snap. Rails sit just above the
+    // kerbs and ledges they run along, so snapping first meant the snap always
+    // won and a low rail could never be caught at all.
+    if (!this.grounded) {
+      this._tryGrind(input);
+      if (this.state === PSTATE.GRIND) return;
+    }
 
     if (!this.grounded && this.velocity.y <= 0.5) {
       // Ground snap keeps stairs and small ledges from launching the skater.
@@ -378,7 +422,6 @@ export class Player {
       this.setState(PSTATE.AIR);
     }
 
-    if (!this.grounded) this._tryGrind(input);
     if (this.state === PSTATE.AIR || this.state === PSTATE.SKATE) this._tryWallride(dt, input);
 
     if (this.position.y < -40) this.respawn();
@@ -401,22 +444,49 @@ export class Player {
   _tryGrind(input) {
     if (this.grindCooldown > 0) return;
     if (this.velocity.y > 6) return;
-    const hit = this.rails.find(this.position, C.grindSnapDistance + C.radius);
+    // Other rails stay latchable straight away, so rail-to-rail transfers keep
+    // their snap; only the one just left is off limits.
+    const blocked = this.noRelatchTimer > 0 ? this.noRelatchRail : null;
+    const hit = this.rails.find(
+      this.position,
+      C.grindSnapDistance + C.radius,
+      blocked ? (rail) => rail !== blocked : null,
+    );
     if (!hit) return;
+
+    // Narrow phase. The rail has to be near underfoot, not merely somewhere in
+    // a sphere around the skater: you catch a rail by coming down onto it. A
+    // fat spherical radius meant anything within a couple of metres in any
+    // direction grabbed you, which is what made rails impossible to leave.
+    const dx = hit.point.x - this.position.x;
+    const dy = hit.point.y - this.position.y;
+    const dz = hit.point.z - this.position.z;
+    if (Math.hypot(dx, dz) > C.grindGrabRadius) return;
+    if (dy > C.grindGrabAbove || dy < -C.grindGrabBelow) return;
 
     // Only latch when moving roughly along the rail, or slow enough to just land on it.
     _hv.set(this.velocity.x, 0, this.velocity.z);
     const speed = _hv.length();
-    const tangent = hit.tangent;
     let dir = 1;
     if (speed > 1.5) {
-      const along = (_hv.x * tangent.x + _hv.z * tangent.z) / speed;
+      // Right on a corner the closest point is the join between two segments,
+      // and the tangent there belongs to whichever of them the search happened
+      // to land on -- which can read as perpendicular to travel and refuse a
+      // grind the player is lined up for. Sample either side and take the best
+      // match; a genuine broadside approach still fails all three.
+      let along = 0;
+      for (const offset of [0, -0.7, 0.7]) {
+        hit.rail.getTangentAt(hit.along + offset, _tangent);
+        const dot = (_hv.x * _tangent.x + _hv.z * _tangent.z) / speed;
+        if (Math.abs(dot) > Math.abs(along)) along = dot;
+      }
       if (Math.abs(along) < 0.35) return;
       dir = along >= 0 ? 1 : -1;
     } else {
       _fwd.set(Math.sin(this.heading), 0, Math.cos(this.heading));
-      dir = _fwd.dot(tangent) >= 0 ? 1 : -1;
+      dir = _fwd.dot(hit.tangent) >= 0 ? 1 : -1;
     }
+    const tangent = hit.tangent;
 
     this.rail = hit.rail;
     this.railDist = hit.along;
@@ -463,7 +533,7 @@ export class Player {
 
     if (this.jumpBuffer > 0) {
       this.jumpBuffer = 0;
-      this._exitGrind(true);
+      this._exitGrind(true, input);
       return;
     }
 
@@ -474,7 +544,7 @@ export class Player {
     }
   }
 
-  _exitGrind(hopped) {
+  _exitGrind(hopped, input = null) {
     const rail = this.rail;
     const dist = this.grindDistance;
     this.rail = null;
@@ -486,6 +556,18 @@ export class Player {
       this.velocity.multiplyScalar(C.grindExitSpeedKeep * boost);
       this.velocity.y = C.grindHopSpeed;
       this.jumpHeld = C.jumpHoldTime;
+      // Bail in the direction you are holding, so stepping off sideways is a
+      // decision rather than a wrestle with the rail.
+      if (input) {
+        const throttle = Math.hypot(input.move.x, input.move.y);
+        if (throttle > 0.2) {
+          this._inputWorldDir(input, _inputDir);
+          this.velocity.addScaledVector(_inputDir, C.grindBailSpeed * throttle);
+          this.heading = Math.atan2(_inputDir.x, _inputDir.z);
+        }
+      }
+      this.noRelatchRail = rail;
+      this.noRelatchTimer = C.grindRelatchLockout;
     }
     this.setState(PSTATE.AIR);
     this.events.emit('player:grind:end', { player: this, distance: dist, hopped, rail });

@@ -658,3 +658,12 @@ html, body {
   text-transform: uppercase;
   color: var(--yellow);
 }
+
+/* Menu focus, driven by a gamepad as much as by the mouse. */
+.btn.is-focused,
+.picker__btn.is-focused {
+  outline: none;
+  box-shadow: 5px 5px 0 rgba(0, 0, 0, 0.5), 0 0 0 4px var(--cyan);
+}
+.btn.is-focused { background: var(--pink); color: #fff; }
+.picker__btn.is-focused.is-on { background: var(--pink); }

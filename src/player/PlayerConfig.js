@@ -31,7 +31,15 @@ export const SKATER = {
   jumpBufferTime: 0.16,
   groundSnapDistance: 0.55,
 
+  // Broad phase: how far the rail search looks at all.
   grindSnapDistance: 1.9,
+  // Acceptance window, measured from the feet. A rail has to be close to
+  // underfoot to be caught -- a fat spherical radius meant anything within a
+  // couple of metres in any direction grabbed the skater, which is what made
+  // rails feel impossible to leave.
+  grindGrabRadius: 0.85,
+  grindGrabAbove: 0.5,
+  grindGrabBelow: 1.6,
   grindMinSpeed: 3.0,
   grindAccel: 7.0,
   grindMaxSpeed: 30,
@@ -39,6 +47,10 @@ export const SKATER = {
   grindExitSpeedKeep: 1.0,
   grindHopSpeed: 9.5,
   grindCooldown: 0.18,
+  // Sideways push when bailing off a rail, and how long that rail stays
+  // un-latchable afterwards so the hop actually leaves it.
+  grindBailSpeed: 7.5,
+  grindRelatchLockout: 0.55,
 
   wallrideMinSpeed: 8.0,
   wallrideTime: 1.9,
