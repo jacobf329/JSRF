@@ -4,3 +4,11 @@ dist/
 *.log
 .vite/
 scratch/
+
+# Per-install state, created on the player's machine
+version.json
+no_update_check.txt
+branch.txt
+launch_log.txt
+browser-profile/
+setup_log.txt

@@ -8,17 +8,58 @@ Everything you see and hear is generated at runtime — there are no model, text
 or audio files in this repository. The city, the character, the graffiti and the
 soundtrack are all built from code.
 
-## Running it
+## Play it
+
+The game ships as **one self-contained HTML file**. There is no engine to
+download and no runtime to install — everything it needs is inside that file,
+and your browser opens it.
+
+### Install on a desktop
+
+**Windows** — open PowerShell and paste:
+
+```powershell
+irm https://raw.githubusercontent.com/jacobf329/JSRF/claude/jet-set-radio-future-hd1kfg/tools/install.ps1 | iex
+```
+
+**macOS / Linux** — open Terminal and paste:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jacobf329/JSRF/claude/jet-set-radio-future-hd1kfg/tools/install.sh | bash
+```
+
+Either one downloads the game to a folder of its own, puts a **Jet Set Radio
+Future** icon on your Desktop with an **Update Jet Set Radio Future** icon next
+to it, and starts the game. Nothing is installed system-wide; deleting the
+folder and the two icons removes it completely.
+
+If you would rather not paste a command: download the folder from GitHub, then
+run `Setup.bat` (Windows) or `./setup.sh` (macOS/Linux) inside it.
+
+### Updates
+
+Launching checks for a new version first and updates itself if there is one —
+usually a fraction of a second, and it plays the copy you have if you are
+offline. To stop that, put an empty file called `no_update_check.txt` next to
+the launcher.
+
+The **Update** icon does the same thing on demand, and also replaces the
+launcher scripts themselves (a launcher cannot safely rewrite itself while it is
+running, so the automatic update leaves those alone).
+
+### Running from source
 
 ```bash
 npm install
-npm run dev      # http://localhost:5173
+npm run dev           # http://localhost:5173
+npm run build         # production bundle in dist/
+npm run build:single  # the distributable game/JetSetRadioFuture.html
 ```
 
-```bash
-npm run build    # production bundle in dist/
-npm run preview  # serve the production bundle
-```
+`game/JetSetRadioFuture.html` is a build artifact that is committed on purpose:
+it is what the launcher downloads, and committing it is what lets the game
+install with no toolchain on the player's machine. Re-run `npm run build:single`
+and commit the result whenever the game changes.
 
 ## Controls
 
@@ -83,7 +124,9 @@ src/
   gameplay/   graffiti, pickups, score, police, particles, mission rules
   ui/         HUD and menu screens
   audio/      procedural radio and SFX
-tools/        headless Playwright smoke test
+scripts/      icon generator, single-file bundler
+tools/        installers, launcher, updater, headless smoke tests
+game/         the distributable single-file build
 ```
 
 A few pieces worth calling out:

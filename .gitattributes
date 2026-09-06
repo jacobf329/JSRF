@@ -1,0 +1,9 @@
+# Windows shells re-read a script by byte offset as they run it; a batch file
+# with LF endings can break mid-run. Force the endings per file type rather
+# than relying on whatever each machine's core.autocrlf happens to be.
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.sh text eol=lf
+*.command text eol=lf
+*.html text eol=lf

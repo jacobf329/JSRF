@@ -7,7 +7,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:single": "node scripts/build-single.mjs",
+    "icon": "python3 scripts/make_icon.py"
   },
   "dependencies": {
     "three": "^0.185.1"
