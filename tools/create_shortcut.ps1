@@ -26,9 +26,8 @@ function New-Link($name, $targetPath, $description) {
 	$link.TargetPath = $targetPath
 	$link.WorkingDirectory = $project
 	$link.Description = $description
-	# Batch launchers open a console first; minimised keeps it out of the way
-	# while the browser window comes up.
-	$link.WindowStyle = 7
+	# Left at the default window style on purpose: the console is where the
+	# update progress shows, and it closes itself once the browser is up.
 	if (Test-Path -LiteralPath $icon) { $link.IconLocation = $icon }
 	$link.Save()
 	Write-Host "   Created: $path" -ForegroundColor Green

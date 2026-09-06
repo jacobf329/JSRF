@@ -125,27 +125,30 @@ function Install-Head($project, $head, $full) {
 		$source = Get-ChildItem -LiteralPath $temp -Directory | Select-Object -First 1
 		if (-not $source) { throw 'the download did not contain a game folder' }
 
-		# Refuse to install a download that is missing the thing being installed.
-		$gameFile = Join-Path $source.FullName 'game\JetSetRadioFuture.html'
+		# Refuse to install a download that is missing the thing being installed:
+		# a truncated fetch must not replace a working copy with a broken one.
+		$gameFile = Join-Path (Join-Path $source.FullName 'game') 'JetSetRadioFuture.html'
 		if (-not (Test-Path -LiteralPath $gameFile) -or (Get-Item -LiteralPath $gameFile).Length -lt 100KB) {
 			throw 'the download did not contain a usable game file'
 		}
 
-		$root = $source.FullName.TrimEnd('\')
+		$root = $source.FullName.TrimEnd('\', '/')
 		foreach ($item in Get-ChildItem -LiteralPath $root -Recurse -File) {
-			$relative = $item.FullName.Substring($root.Length + 1)
-			$name = Split-Path $relative -Leaf
-			$isRoot = -not $relative.Contains('\')
+			# Compare on '/' so the same code works wherever it is tested.
+			$relative = $item.FullName.Substring($root.Length + 1) -replace '[\\/]', '/'
+			$parts = $relative -split '/'
+			$name = $parts[-1]
 
 			if ($Keep -contains $name) { continue }
-			if ($relative -like '.git\*' -or $relative -like 'node_modules\*') { continue }
-			if (-not $full -and $isRoot) {
+			if ($relative -like '.git/*' -or $relative -like 'node_modules/*') { continue }
+			if (-not $full -and $parts.Count -eq 1) {
 				$skip = $false
 				foreach ($pattern in $Protected) { if ($name -like $pattern) { $skip = $true } }
 				if ($skip) { continue }
 			}
 
-			$destination = Join-Path $project $relative
+			$destination = $project
+			foreach ($part in $parts) { $destination = Join-Path $destination $part }
 			$parent = Split-Path $destination -Parent
 			if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
 			Copy-Item -LiteralPath $item.FullName -Destination $destination -Force

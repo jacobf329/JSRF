@@ -15,21 +15,27 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $project = (Resolve-Path $ProjectDir).Path
-$game = Join-Path $project 'game\JetSetRadioFuture.html'
+$game = Join-Path (Join-Path $project 'game') 'JetSetRadioFuture.html'
 
 
 function Find-Browser {
-	$candidates = @(
-		(Join-Path $env:ProgramFiles 'Google\Chrome\Application\chrome.exe'),
-		(Join-Path ${env:ProgramFiles(x86)} 'Google\Chrome\Application\chrome.exe'),
-		(Join-Path $env:LOCALAPPDATA 'Google\Chrome\Application\chrome.exe'),
-		(Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe'),
-		(Join-Path $env:ProgramFiles 'Microsoft\Edge\Application\msedge.exe'),
-		(Join-Path $env:ProgramFiles 'BraveSoftware\Brave-Browser\Application\brave.exe'),
-		(Join-Path ${env:ProgramFiles(x86)} 'BraveSoftware\Brave-Browser\Application\brave.exe')
+	# Built from parts rather than Join-Path, because a missing environment
+	# variable (32-bit Windows has no ProgramFiles(x86)) makes Join-Path throw
+	# rather than simply miss.
+	$bases = @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:LOCALAPPDATA)
+	$relatives = @(
+		'Google\Chrome\Application\chrome.exe',
+		'Microsoft\Edge\Application\msedge.exe',
+		'BraveSoftware\Brave-Browser\Application\brave.exe',
+		'Vivaldi\Application\vivaldi.exe',
+		'Chromium\Application\chrome.exe'
 	)
-	foreach ($path in $candidates) {
-		if ($path -and (Test-Path -LiteralPath $path)) { return $path }
+	foreach ($relative in $relatives) {
+		foreach ($base in $bases) {
+			if (-not $base) { continue }
+			$path = "$base\$relative"
+			if (Test-Path -LiteralPath $path) { return $path }
+		}
 	}
 	return $null
 }
@@ -55,7 +61,9 @@ if (-not (Test-Path -LiteralPath $game)) {
 	Write-Host "   Run Setup.bat in this folder to fetch it."
 	Write-Host ""
 	Write-Host "   Press any key to close."
-	[void][Console]::ReadKey($true)
+	# No console to read from (launched from a shortcut with no window, say) is
+	# not a reason to fail differently.
+	try { [void][Console]::ReadKey($true) } catch { Start-Sleep -Seconds 8 }
 	exit 1
 }
 
