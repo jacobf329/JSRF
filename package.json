@@ -1,0 +1,19 @@
+{
+  "name": "jsrf",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A Jet Set Radio Future inspired cel-shaded skating game",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "playwright": "^1.63.0",
+    "vite": "^6.0.0"
+  }
+}

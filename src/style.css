@@ -1,0 +1,44 @@
+:root {
+  --ink: #141626;
+  --paper: #f6f2e6;
+  --pink: #ff2f87;
+  --cyan: #24d6ff;
+  --lime: #a8ff3e;
+  --yellow: #ffd21e;
+  --orange: #ff7a1a;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #0b0d16;
+  font-family: 'Barlow Condensed', 'Arial Narrow', system-ui, sans-serif;
+  color: var(--paper);
+  -webkit-font-smoothing: antialiased;
+}
+
+#app { position: fixed; inset: 0; }
+
+#viewport {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+#ui {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  user-select: none;
+  overflow: hidden;
+}
+
+#ui > * { pointer-events: none; }
+#ui .clickable { pointer-events: auto; }
