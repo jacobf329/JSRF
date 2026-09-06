@@ -61,10 +61,7 @@ export class Pickups {
 
   update(dt, game) {
     this.time += dt;
-    const player = game.player;
-    const px = player.position.x;
-    const py = player.position.y + 0.9;
-    const pz = player.position.z;
+    const slots = game.slots;
 
     for (let i = 0; i < this.cans.length; i++) {
       const can = this.cans[i];
@@ -92,12 +89,20 @@ export class Pickups {
       this.body.setMatrixAt(i, _m);
       this.cap.setMatrixAt(i, _m);
 
-      const d = Math.hypot(_p.x - px, _p.y - py, _p.z - pz);
-      if (d < PICKUP_RADIUS && can.scale > 0.6) {
-        can.active = false;
-        can.respawn = RESPAWN_TIME;
-        this.effects.burst(_p, can.color, 16, 4.5);
-        this.events.emit('pickup:can', { position: _p.clone(), amount: 1, color: can.color });
+      if (can.scale > 0.6) {
+        // First player to reach it takes it.
+        for (const slot of slots) {
+          const pp = slot.player.position;
+          const d = Math.hypot(_p.x - pp.x, _p.y - (pp.y + 0.9), _p.z - pp.z);
+          if (d >= PICKUP_RADIUS) continue;
+          can.active = false;
+          can.respawn = RESPAWN_TIME;
+          this.effects.burst(_p, can.color, 16, 4.5);
+          this.events.emit('pickup:can', {
+            position: _p.clone(), amount: 1, color: can.color, player: slot.player,
+          });
+          break;
+        }
       }
     }
 

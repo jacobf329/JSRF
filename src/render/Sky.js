@@ -94,9 +94,12 @@ export class Sky {
     this.mesh.name = 'sky';
   }
 
-  update(dt, camera) {
+  tick(dt) {
     this.material.uniforms.uTime.value += dt;
-    // Keep the dome centred on the camera so it never clips the far plane.
+  }
+
+  /** Centre the dome on whichever camera is about to render. */
+  place(camera) {
     this.mesh.position.copy(camera.position);
     this.mesh.scale.setScalar(camera.far * 0.9);
   }

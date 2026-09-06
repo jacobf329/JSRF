@@ -111,9 +111,10 @@ export class Graffiti {
     this.taggedCount = 0;
     this.totalCount = this.spots.length;
 
-    this.session = null;
-    this.prompt = null;
-    this._stickLatch = null;
+    // Several players can be painting different walls at once, so sessions and
+    // prompts are keyed by player.
+    this.sessions = new Map();
+    this.prompts = new Map();
     this._pulse = 0;
   }
 
@@ -164,6 +165,7 @@ export class Graffiti {
       const p = spot.data.position;
       const dist = Math.hypot(p.x - px, p.y - py, p.z - pz);
       if (dist >= bestDist) continue;
+      if (this._claimed(spot)) continue;
       // Must be roughly in front of the wall, not behind it.
       const toPlayer = (px - p.x) * spot.data.normal.x + (pz - p.z) * spot.data.normal.z;
       if (toPlayer < -0.2) continue;
@@ -175,10 +177,23 @@ export class Graffiti {
 
   cansFor(spot) { return SIZE_RULES[spot.data.size].cans; }
 
+  sessionFor(player) { return this.sessions.get(player) || null; }
+  promptFor(player) { return this.prompts.get(player) || null; }
+  get anySession() { return this.sessions.size > 0; }
+
+  /** True while another player has already claimed this wall. */
+  _claimed(spot, exclude = null) {
+    for (const [player, session] of this.sessions) {
+      if (player === exclude) continue;
+      if (session.spot === spot) return true;
+    }
+    return false;
+  }
+
   // ------------------------------------------------------------- minigame
 
   begin(spot, player) {
-    if (this.session || spot.tagged) return false;
+    if (this.sessions.has(player) || spot.tagged || this._claimed(spot)) return false;
     const rule = SIZE_RULES[spot.data.size];
     const sequence = [];
     for (let i = 0; i < rule.steps; i++) {
@@ -214,21 +229,21 @@ export class Graffiti {
     spot.marker.visible = false;
     spot.beacon.visible = false;
 
-    this.session = {
-      spot, sequence, index: 0, rule, word, palette,
+    this.sessions.set(player, {
+      player, spot, sequence, index: 0, rule, word, palette,
       progress: 0, targetProgress: 0,
       timeLeft: 1.55, stepTime: 1.55,
-      material, decal, failed: false, flash: 0,
-    };
-    this._stickLatch = null;
+      material, decal, failed: false, flash: 0, stickLatch: null,
+    });
     player.beginTag(spot.data);
-    this.events.emit('tag:begin', { spot, word, sequence });
+    this.events.emit('tag:begin', { spot, word, sequence, player });
     return true;
   }
 
   cancel(player, { keepDecal = false } = {}) {
-    const s = this.session;
+    const s = this.sessions.get(player);
     if (!s) return;
+    this.sessions.delete(player);
     if (!keepDecal) {
       this.group.remove(s.decal);
       s.decal.geometry.dispose();
@@ -238,32 +253,32 @@ export class Graffiti {
       s.spot.marker.visible = true;
       s.spot.beacon.visible = true;
     }
-    this.session = null;
     if (player.state === PSTATE.TAG) player.endTag();
-    this.events.emit('tag:cancel', { spot: s.spot });
+    this.events.emit('tag:cancel', { spot: s.spot, player });
   }
 
   _complete(player) {
-    const s = this.session;
+    const s = this.sessions.get(player);
+    if (!s) return;
+    this.sessions.delete(player);
     const spot = s.spot;
     spot.tagged = true;
     spot.marker.visible = false;
     spot.beacon.visible = false;
     s.material.uniforms.uProgress.value = 1;
     this.taggedCount++;
-    this.session = null;
     player.endTag();
 
     const pos = spot.data.position.clone().addScaledVector(spot.data.normal, 0.6);
     this.effects.burst(pos, new THREE.Color(s.palette[0]).getHex(), 34, 7);
     this.events.emit('tag:complete', {
-      spot, word: s.word, points: s.rule.points,
+      spot, word: s.word, points: s.rule.points, player,
       cans: s.rule.cans, size: spot.data.size, position: pos,
     });
   }
 
   /** Edge-detected directional input from keys or the left stick. */
-  _readDirection(input) {
+  _readDirection(input, session) {
     for (const dir of DIRECTIONS) {
       if (input.pressed(dir)) return dir;
     }
@@ -272,19 +287,17 @@ export class Graffiti {
       const dir = Math.abs(input.move.x) > Math.abs(input.move.y)
         ? (input.move.x > 0 ? 'right' : 'left')
         : (input.move.y > 0 ? 'up' : 'down');
-      if (this._stickLatch !== dir) {
-        this._stickLatch = dir;
+      if (session.stickLatch !== dir) {
+        session.stickLatch = dir;
         return dir;
       }
     } else if (mag < 0.35) {
-      this._stickLatch = null;
+      session.stickLatch = null;
     }
     return null;
   }
 
   update(dt, game) {
-    const player = game.player;
-    const input = game.input;
     this._pulse += dt;
 
     // Idle markers breathe so they read from across the street.
@@ -296,9 +309,17 @@ export class Graffiti {
       spot.marker.scale.setScalar(s);
     }
 
-    if (this.session) {
-      this._updateSession(dt, game, player, input);
-      this.prompt = null;
+    for (const slot of game.slots) {
+      this._updateSlot(dt, game, slot);
+    }
+  }
+
+  _updateSlot(dt, game, slot) {
+    const { player, input, score } = slot;
+
+    if (this.sessions.has(player)) {
+      this._updateSession(dt, game, slot);
+      this.prompts.delete(player);
       return;
     }
 
@@ -306,24 +327,26 @@ export class Graffiti {
     const near = this.findNearby(player);
     if (near && !player.isLocked) {
       const cans = this.cansFor(near);
-      this.prompt = { spot: near, cans, enough: game.score ? game.score.cans >= cans : true };
-      if (input.pressed('spray') && this.prompt.enough && player.grounded) {
+      const prompt = { spot: near, cans, enough: score ? score.cans >= cans : true };
+      this.prompts.set(player, prompt);
+      if (input.pressed('spray') && prompt.enough && player.grounded) {
         this.begin(near, player);
       }
     } else {
-      this.prompt = null;
+      this.prompts.delete(player);
     }
   }
 
-  _updateSession(dt, game, player, input) {
-    const s = this.session;
+  _updateSession(dt, game, slot) {
+    const { player, input } = slot;
+    const s = this.sessions.get(player);
     s.flash = Math.max(0, s.flash - dt * 4);
 
     if (player.state !== PSTATE.TAG) { this.cancel(player); return; }
     if (input.pressed('jump')) { this.cancel(player); return; }
 
     s.timeLeft -= dt;
-    const dir = this._readDirection(input);
+    const dir = this._readDirection(input, s);
     if (dir) {
       if (dir === s.sequence[s.index]) {
         s.index++;
@@ -334,13 +357,13 @@ export class Graffiti {
           .addScaledVector(s.spot.data.normal, 0.35)
           .add(new THREE.Vector3(0, (Math.random() - 0.5) * s.spot.data.height * 0.6, 0));
         this.effects.spray(p, s.spot.data.normal, new THREE.Color(s.palette[0]).getHex(), 8);
-        this.events.emit('tag:step', { index: s.index, total: s.sequence.length });
+        this.events.emit('tag:step', { index: s.index, total: s.sequence.length, player });
         if (s.index >= s.sequence.length) { this._complete(player); return; }
       } else {
         s.timeLeft -= 0.35;
         s.flash = -1;
-        game.followCamera.addShake(0.25);
-        this.events.emit('tag:miss', {});
+        slot.followCamera.addShake(0.25);
+        this.events.emit('tag:miss', { player });
       }
     }
 
@@ -348,17 +371,16 @@ export class Graffiti {
     s.material.uniforms.uProgress.value = clamp(s.progress, 0, 1);
 
     if (s.timeLeft <= 0) {
-      this.events.emit('tag:fail', { spot: s.spot });
+      this.events.emit('tag:fail', { spot: s.spot, player });
       this.cancel(player);
     }
   }
 
   /** Strip every decal and put the markers back. */
   reset() {
-    if (this.session) {
-      this.group.remove(this.session.decal);
-      this.session = null;
-    }
+    for (const session of this.sessions.values()) this.group.remove(session.decal);
+    this.sessions.clear();
+    this.prompts.clear();
     for (const spot of this.spots) {
       if (spot.decal) {
         this.group.remove(spot.decal);
@@ -372,7 +394,6 @@ export class Graffiti {
       spot.beacon.visible = true;
     }
     this.taggedCount = 0;
-    this.prompt = null;
   }
 
   get remaining() { return this.totalCount - this.taggedCount; }

@@ -166,7 +166,9 @@ class Cop {
   }
 
   update(dt, ctx) {
-    const { player, collision, effects, events, alertRadius } = ctx;
+    const { collision, effects, events, alertRadius } = ctx;
+    const player = ctx.pickTarget(this);
+    this.target_player = player;
     this.stateTime += dt;
     this.cooldown = Math.max(0, this.cooldown - dt);
 
@@ -187,7 +189,7 @@ class Cop {
           this.state = STATE.CHASE;
           this.stateTime = 0;
           this.lostTimer = 0;
-          events.emit('police:spot', { cop: this });
+          events.emit('police:spot', { cop: this, player });
         } else {
           if (this.position.distanceTo(this.target) < 2.5 || this.stateTime > 6) {
             const a = Math.random() * Math.PI * 2;
@@ -231,7 +233,7 @@ class Cop {
           if (flat2 < COP.attackRange + 0.8 && Math.abs(toPlayer.y) < 2.4) {
             if (player.hit(this.position, 1)) {
               effects.impact(player.position.clone().setY(player.position.y + 1), 0xff4d2e, 18);
-              events.emit('police:strike', { cop: this });
+              events.emit('police:strike', { cop: this, player });
             }
           }
           this.cooldown = COP.attackCooldown;
@@ -247,7 +249,7 @@ class Cop {
     if (this.state !== STATE.STUN && dist < 1.5 && player.speed > COP.knockdownSpeed) {
       this.knockdown(player.velocity);
       effects.burst(this.position.clone().setY(this.position.y + 1), PALETTE.policeAccent, 22, 6);
-      events.emit('police:knockdown', { cop: this });
+      events.emit('police:knockdown', { cop: this, player });
     }
 
     this._physics(dt, collision);
@@ -359,7 +361,7 @@ export class Police {
     scene.add(this.group);
 
     this.pool = [];
-    this.maxCops = 6;
+    this.maxCops = 8;
     for (let i = 0; i < this.maxCops; i++) {
       const cop = new Cop();
       cop.despawn();
@@ -372,6 +374,7 @@ export class Police {
     this.spawnTimer = 2.5;
     this.enabled = true;
 
+    this._target = new THREE.Vector3();
     events.on('tag:complete', () => { this.heat = Math.min(this.maxHeat, this.heat + 1); });
     events.on('police:knockdown', () => { this.heat = Math.max(0, this.heat - 0.35); });
   }
@@ -387,38 +390,55 @@ export class Police {
 
   update(dt, game) {
     if (!this.enabled) return;
-    const player = game.player;
+    const slots = game.slots;
+    if (!slots.length) return;
 
-    // Heat bleeds off, faster when the player stays off the street.
-    const highGround = player.position.y > 8;
-    this.heat = Math.max(0, this.heat - dt * (highGround ? 0.16 : 0.05));
+    // Heat bleeds off, faster while everyone stays off the street.
+    const allHigh = slots.every((s) => s.player.position.y > 8);
+    this.heat = Math.max(0, this.heat - dt * (allHigh ? 0.16 : 0.05));
 
-    const wanted = Math.min(this.maxCops, Math.floor(this.heat));
+    // More rudies on the street means more of a response.
+    const wanted = Math.min(this.maxCops, Math.floor(this.heat) + (slots.length - 1));
     const active = this.activeCops;
 
     this.spawnTimer -= dt;
     if (active.length < wanted && this.spawnTimer <= 0) {
       this.spawnTimer = 1.3;
-      this._spawnNear(player);
+      // Spawn near whoever has been busiest -- highest heat contribution is
+      // hard to track, so use whoever most recently drew attention.
+      this._spawnNear(slots[Math.floor(Math.random() * slots.length)].player);
     }
 
     const alertRadius = COP.sightRadius + this.heat * 3;
     const ctx = {
-      player,
       collision: this.level.collision,
       effects: this.effects,
       events: this.events,
       alertRadius,
+      // Each officer independently locks on to whoever is closest, so in
+      // split-screen the squad naturally spreads across the players.
+      pickTarget: (cop) => this._nearestPlayer(slots, cop.position),
     };
 
     for (const cop of this.pool) {
       if (!cop.active) continue;
-      if (cop.position.distanceTo(player.position) > COP.maxDistanceFromPlayer) {
+      const nearest = this._nearestPlayer(slots, cop.position);
+      if (cop.position.distanceTo(nearest.position) > COP.maxDistanceFromPlayer) {
         cop.despawn();
         continue;
       }
       cop.update(dt, ctx);
     }
+  }
+
+  _nearestPlayer(slots, position) {
+    let best = slots[0].player;
+    let bestDist = Infinity;
+    for (const slot of slots) {
+      const d = slot.player.position.distanceToSquared(position);
+      if (d < bestDist) { bestDist = d; best = slot.player; }
+    }
+    return best;
   }
 
   _spawnNear(player) {

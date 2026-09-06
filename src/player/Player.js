@@ -38,13 +38,23 @@ const _hit = { point: new THREE.Vector3(), normal: new THREE.Vector3(), distance
  * wallride, plus locked states for tagging and taking a hit.
  */
 export class Player {
-  constructor(level, events) {
+  constructor(level, events, options = {}) {
+    this.index = options.index ?? 0;
+    this.name = options.name ?? 'RUDIE';
+    this.color = options.color ?? 0x24d6ff;
     this.level = level;
     this.collision = level.collision;
     this.rails = level.rails;
     this.events = events;
 
     this.position = level.spawn.clone();
+    // Fan players out around the spawn so nobody starts inside anybody else.
+    if (this.index > 0) {
+      const a = (this.index / 4) * Math.PI * 2 + 0.6;
+      this.position.x += Math.cos(a) * 5.5;
+      this.position.z += Math.sin(a) * 5.5;
+    }
+    this.spawnPoint = this.position.clone();
     this.velocity = new THREE.Vector3();
     this.heading = level.spawnHeading;
     this.visualHeading = this.heading;
@@ -627,7 +637,7 @@ export class Player {
   }
 
   respawn(point = null) {
-    this.position.copy(point || this.level.spawn);
+    this.position.copy(point || this.spawnPoint || this.level.spawn);
     this.velocity.set(0, 0, 0);
     this.rail = null;
     this.trick = null;

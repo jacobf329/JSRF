@@ -1,4 +1,5 @@
 import { formatScore, formatTime } from '../core/MathUtils.js';
+import { MAX_PLAYERS } from '../core/Constants.js';
 
 const CONTROLS = [
   ['WASD / Left stick', 'Skate'],
@@ -14,7 +15,7 @@ function controlsMarkup() {
   return `<dl class="controls">${CONTROLS.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>`;
 }
 
-/** Title, pause, busted and results screens. */
+/** Title, pause, busted and results screens, plus the player-count picker. */
 export class Menus {
   constructor(root, game) {
     this.root = root;
@@ -25,7 +26,14 @@ export class Menus {
       <div class="screen clickable" data-screen="title">
         <div class="screen__sub">Tokyo-to &middot; Shibuya Terminal</div>
         <h1 class="screen__title">JET SET<br />RADIO FUTURE</h1>
-        <div class="screen__hint">Click or press ENTER to skate</div>
+
+        <div class="picker">
+          <div class="picker__label">Players</div>
+          <div class="picker__row" data-players></div>
+          <div class="picker__devices" data-devices></div>
+        </div>
+
+        <button class="btn btn--big" data-action="start">Skate</button>
         ${controlsMarkup()}
       </div>
 
@@ -35,6 +43,7 @@ export class Menus {
         <div class="btn-row">
           <button class="btn" data-action="resume">Resume</button>
           <button class="btn" data-action="restart">Restart run</button>
+          <button class="btn" data-action="quit">Quit to title</button>
         </div>
       </div>
 
@@ -50,9 +59,10 @@ export class Menus {
       <div class="screen clickable" data-screen="results">
         <div class="screen__sub" data-results-sub>District tagged</div>
         <h1 class="screen__title" data-results-rank>RANK: JET</h1>
-        <div class="results" data-results-body></div>
+        <div data-results-body></div>
         <div class="btn-row">
           <button class="btn" data-action="restart">Run it again</button>
+          <button class="btn" data-action="quit">Title screen</button>
         </div>
       </div>
     `;
@@ -62,25 +72,53 @@ export class Menus {
     for (const s of this.el.querySelectorAll('[data-screen]')) {
       this.screens[s.dataset.screen] = s;
     }
+    this.$players = this.el.querySelector('[data-players]');
+    this.$devices = this.el.querySelector('[data-devices]');
+
+    for (let n = 1; n <= MAX_PLAYERS; n++) {
+      const btn = document.createElement('button');
+      btn.className = 'picker__btn';
+      btn.dataset.action = 'players';
+      btn.dataset.value = String(n);
+      btn.textContent = String(n);
+      this.$players.appendChild(btn);
+    }
 
     this.el.addEventListener('click', (ev) => {
       const btn = ev.target.closest('[data-action]');
-      if (btn) {
-        ev.stopPropagation();
-        this.onAction?.(btn.dataset.action);
-        return;
-      }
-      if (this.current === 'title') this.onAction?.('start');
+      if (!btn) return;
+      ev.stopPropagation();
+      const value = btn.dataset.value !== undefined ? Number(btn.dataset.value) : undefined;
+      this.onAction?.(btn.dataset.action, value);
     });
 
     this.current = null;
     this.onAction = null;
+    this.refreshPlayers();
+  }
+
+  /** Reflect the chosen player count and show what will drive each seat. */
+  refreshPlayers() {
+    const count = this.game.playerCount;
+    for (const btn of this.$players.children) {
+      btn.classList.toggle('is-on', Number(btn.dataset.value) === count);
+    }
+    const assignment = this.game.input.describeAssignment(count);
+    this.$devices.innerHTML = assignment.map((a) => `
+      <div class="picker__device ${a.connected ? '' : 'is-missing'}">
+        <b>P${a.player}</b> ${a.label}
+      </div>`).join('');
+    const pads = this.game.input.padCount;
+    if (count > 2 && pads < count - 1) {
+      this.$devices.innerHTML += `<div class="picker__warn">Plug in ${count - 1 - pads} more gamepad${count - 1 - pads > 1 ? 's' : ''} to fill every seat</div>`;
+    }
   }
 
   show(name) {
     for (const key of Object.keys(this.screens)) {
       this.screens[key].classList.toggle('is-on', key === name);
     }
+    if (name === 'title') this.refreshPlayers();
     this.current = name;
   }
 
@@ -95,29 +133,51 @@ export class Menus {
   }
 
   showResults(stats) {
-    const rank = rankFor(stats);
-    this.el.querySelector('[data-results-rank]').textContent = `RANK: ${rank}`;
+    const solo = stats.players.length === 1;
+    const rank = rankFor(stats, stats.players[0]);
+    this.el.querySelector('[data-results-rank]').textContent = solo
+      ? `RANK: ${rank}`
+      : `P${stats.winner.index + 1} ${stats.winner.name} WINS`;
     this.el.querySelector('[data-results-sub]').textContent = stats.complete
-      ? 'Shibuya Terminal is yours'
+      ? `Shibuya Terminal tagged in ${formatTime(stats.time)}`
       : 'Run ended';
-    this.el.querySelector('[data-results-body]').innerHTML = `
-      <span>Score</span><b>${formatScore(stats.score)}</b>
-      <span>Tags</span><b>${stats.tags}/${stats.totalTags}</b>
-      <span>Time</span><b>${formatTime(stats.time)}</b>
-      <span>Best combo</span><b>${formatScore(stats.bestCombo)}</b>
-      <span>Tricks landed</span><b>${stats.tricks}</b>
-      <span>Grind distance</span><b>${Math.round(stats.grindMetres)} m</b>
-      <span>Air time</span><b>${stats.airTime.toFixed(1)} s</b>
-      <span>Takedowns</span><b>${stats.takedowns}</b>
-    `;
+
+    const body = solo
+      ? `<div class="results">
+          <span>Score</span><b>${formatScore(stats.players[0].score)}</b>
+          <span>Tags</span><b>${stats.players[0].tags}/${stats.totalTags}</b>
+          <span>Time</span><b>${formatTime(stats.time)}</b>
+          <span>Best combo</span><b>${formatScore(stats.players[0].bestCombo)}</b>
+          <span>Tricks landed</span><b>${stats.players[0].tricks}</b>
+          <span>Grind distance</span><b>${Math.round(stats.players[0].grindMetres)} m</b>
+          <span>Air time</span><b>${stats.players[0].airTime.toFixed(1)} s</b>
+          <span>Takedowns</span><b>${stats.players[0].takedowns}</b>
+        </div>`
+      : `<table class="scoreboard">
+          <thead><tr><th></th><th>Rudie</th><th>Score</th><th>Tags</th><th>Best combo</th><th>Tricks</th><th>Grind</th><th>Busts</th></tr></thead>
+          <tbody>
+            ${stats.players.map((p, i) => `
+              <tr>
+                <td class="scoreboard__pos">${i + 1}</td>
+                <td style="color:${p.colorHex}"><b>P${p.index + 1} ${p.name}</b></td>
+                <td>${formatScore(p.score)}</td>
+                <td>${p.tags}</td>
+                <td>${formatScore(p.bestCombo)}</td>
+                <td>${p.tricks}</td>
+                <td>${Math.round(p.grindMetres)} m</td>
+                <td>${p.busts}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>`;
+    this.el.querySelector('[data-results-body]').innerHTML = body;
     this.show('results');
   }
 }
 
-function rankFor(stats) {
-  if (!stats.complete) return 'ROOKIE';
-  const perMinute = stats.score / Math.max(1, stats.time / 60);
-  if (perMinute > 90000 && stats.busts === 0) return 'JET';
+function rankFor(stats, player) {
+  if (!stats.complete || !player) return 'ROOKIE';
+  const perMinute = player.score / Math.max(1, stats.time / 60);
+  if (perMinute > 90000 && player.busts === 0) return 'JET';
   if (perMinute > 55000) return 'RUDIE';
   if (perMinute > 30000) return 'STREET';
   return 'ROOKIE';

@@ -4,11 +4,15 @@ import { PALETTE } from '../render/Palette.js';
 import { PSTATE } from './Player.js';
 import { clamp, damp } from '../core/MathUtils.js';
 
-const SKIN = PALETTE.skin;
-const JACKET = 0x18d7c8;
-const JACKET_DARK = 0x0f9a90;
-const PANTS = 0x2b3150;
 const SHOE = 0xf4f6ff;
+
+/** One look per player slot, so everybody is readable at split-screen size. */
+export const RUDIE_SKINS = [
+  { name: 'BEAT', jacket: 0x18d7c8, jacketDark: 0x0f9a90, beanie: 0xff2f87, pack: 0xff7a1a, pants: 0x2b3150, skin: PALETTE.skin, wheel: 0x24d6ff },
+  { name: 'GUM', jacket: 0xa8ff3e, jacketDark: 0x6fb320, beanie: 0x9a5cff, pack: 0x24d6ff, pants: 0x21243a, skin: 0xf2b98a, wheel: 0xa8ff3e },
+  { name: 'YOYO', jacket: 0xff7a1a, jacketDark: 0xc4530a, beanie: 0x24d6ff, pack: 0xffd21e, pants: 0x33263f, skin: 0xc98a5e, wheel: 0xff7a1a },
+  { name: 'COMBO', jacket: 0xff2f87, jacketDark: 0xc00f5c, beanie: 0xffd21e, pack: 0xa8ff3e, pants: 0x1d2b5c, skin: 0x8a5a3c, wheel: 0xff2f87 },
+];
 
 function box(w, h, d, color, opts = {}) {
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), toon(color, opts.mat));
@@ -33,9 +37,16 @@ function limb(length, w, d, color) {
  * clips to load, everything is driven from the player's state and speed.
  */
 export class PlayerModel {
-  constructor() {
+  constructor(skinIndex = 0) {
+    const skinDef = RUDIE_SKINS[skinIndex % RUDIE_SKINS.length];
+    this.skin = skinDef;
+    const JACKET = skinDef.jacket;
+    const JACKET_DARK = skinDef.jacketDark;
+    const PANTS = skinDef.pants;
+    const SKIN = skinDef.skin;
+
     this.root = new THREE.Group();
-    this.root.name = 'rudie';
+    this.root.name = `rudie-${skinDef.name}`;
 
     // `body` carries yaw + lean; `flipper` carries trick rotations so they
     // do not fight each other.
@@ -57,9 +68,9 @@ export class PlayerModel {
     this.torso.add(box(0.62, 0.52, 0.38, JACKET, { pos: [0, 0.66, 0] }));
     this.torso.add(box(0.66, 0.14, 0.42, JACKET_DARK, { pos: [0, 0.44, 0] }));
     // Backpack
-    this.torso.add(box(0.44, 0.5, 0.24, PALETTE.tangerine, { pos: [0, 0.62, -0.28] }));
-    this.torso.add(box(0.1, 0.28, 0.1, PALETTE.bloodOrange, { pos: [0.13, 0.86, -0.4] }));
-    this.torso.add(box(0.1, 0.28, 0.1, PALETTE.hotPink, { pos: [-0.13, 0.86, -0.4] }));
+    this.torso.add(box(0.44, 0.5, 0.24, skinDef.pack, { pos: [0, 0.62, -0.28] }));
+    this.torso.add(box(0.1, 0.28, 0.1, skinDef.beanie, { pos: [0.13, 0.86, -0.4] }));
+    this.torso.add(box(0.1, 0.28, 0.1, skinDef.jacket, { pos: [-0.13, 0.86, -0.4] }));
 
     // Head
     this.neck = new THREE.Group();
@@ -68,19 +79,19 @@ export class PlayerModel {
     this.neck.add(box(0.36, 0.36, 0.34, SKIN, { pos: [0, 0.18, 0] }));
     this.neck.add(box(0.38, 0.12, 0.36, 0x1b1e2c, { pos: [0, 0.3, 0.01] }));       // visor
     this.neck.add(box(0.3, 0.06, 0.34, PALETTE.cyan, { pos: [0, 0.3, 0.06] }));    // visor glow
-    this.neck.add(box(0.4, 0.2, 0.38, PALETTE.hotPink, { pos: [0, 0.44, 0] }));    // beanie
+    this.neck.add(box(0.4, 0.2, 0.38, skinDef.beanie, { pos: [0, 0.44, 0] }));      // beanie
     this.neck.add(box(0.12, 0.2, 0.16, 0x1b1e2c, { pos: [0.24, 0.2, 0] }));        // headphone L
     this.neck.add(box(0.12, 0.2, 0.16, 0x1b1e2c, { pos: [-0.24, 0.2, 0] }));       // headphone R
     this.neck.add(box(0.46, 0.08, 0.1, 0x1b1e2c, { pos: [0, 0.4, -0.02] }));       // headband
 
     // Arms
-    this.armL = this._arm(1);
-    this.armR = this._arm(-1);
+    this.armL = this._arm(1, JACKET, SKIN);
+    this.armR = this._arm(-1, JACKET, SKIN);
     this.torso.add(this.armL.shoulder, this.armR.shoulder);
 
     // Legs
-    this.legL = this._leg(1);
-    this.legR = this._leg(-1);
+    this.legL = this._leg(1, PANTS, skinDef.wheel);
+    this.legR = this._leg(-1, PANTS, skinDef.wheel);
     this.hips.add(this.legL.hip, this.legR.hip);
 
     // Spray can, shown while tagging.
@@ -96,9 +107,10 @@ export class PlayerModel {
     this._tuck = 0;
     this._split = 0;
     this._wall = 0;
+    this.wantVisible = true;
   }
 
-  _arm(side) {
+  _arm(side, JACKET, SKIN) {
     const shoulder = new THREE.Group();
     shoulder.position.set(side * 0.38, 0.78, 0);
     const upper = limb(0.34, 0.16, 0.16, JACKET);
@@ -115,7 +127,7 @@ export class PlayerModel {
     return { shoulder, upper, elbow, lower, hand, side };
   }
 
-  _leg(side) {
+  _leg(side, PANTS, wheelColor) {
     const hip = new THREE.Group();
     hip.position.set(side * 0.17, 0, 0);
     const thigh = limb(0.42, 0.2, 0.22, PANTS);
@@ -134,7 +146,7 @@ export class PlayerModel {
     const wheels = new THREE.Group();
     wheels.position.set(0, -0.22, 0);
     foot.add(wheels);
-    const wheelMat = flat(PALETTE.wheel);
+    const wheelMat = flat(wheelColor);
     const wheelGeo = new THREE.CylinderGeometry(0.075, 0.075, 0.07, 8);
     wheelGeo.rotateZ(Math.PI / 2);
     for (let i = 0; i < 4; i++) {
@@ -229,8 +241,13 @@ export class PlayerModel {
     // Head steadies itself against the body pitch.
     this.neck.rotation.x = damp(this.neck.rotation.x, -this.body.rotation.x * 0.65 + (tagging ? 0.2 : 0), 8, dt);
 
-    // Blink the whole rudie while invulnerable.
-    const flicker = player.invulnerable > 0 && Math.floor(player.time * 14) % 2 === 0;
-    this.root.visible = !flicker;
+    // Blink the whole rudie while invulnerable. The phase is offset per player
+    // so a split-screen respawn does not make everyone vanish at once.
+    const phase = player.index * 0.37;
+    const flicker = player.invulnerable > 0 && Math.floor(player.time * 14 + phase) % 2 === 0;
+    // `wantVisible` is the gameplay answer; per-view near-camera culling can
+    // still hide the rig for a single pane.
+    this.wantVisible = !flicker;
+    this.root.visible = this.wantVisible;
   }
 }

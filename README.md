@@ -22,18 +22,34 @@ npm run preview  # serve the production bundle
 
 ## Controls
 
-| Input | Action |
-| --- | --- |
-| `W` `A` `S` `D` / left stick | Skate |
-| `Space` / `A` | Jump — press again in the air to pull a trick |
-| `Shift` / right trigger | Boost |
-| `E` / `X` | Tag the wall in front of you, then match the arrows |
-| Mouse / right stick | Look around (click the canvas to capture the mouse) |
-| `C` / `B` | Snap the camera behind you |
-| `Esc` / Start | Pause |
-| `M` | Mute the radio |
-| `]` | Next radio track |
-| `F3` / `F4` | Toggle the perf readout / the ink outlines |
+| Action | Player 1 (keyboard) | Player 2 (shared keyboard) | Gamepad |
+| --- | --- | --- | --- |
+| Skate | `W` `A` `S` `D` | Arrow keys | Left stick |
+| Jump / air trick | `Space` | `Numpad 0`, `Right Shift` | `A` |
+| Boost | `Left Shift`, right mouse | `Right Ctrl`, `Numpad 1` | Right trigger / bumper |
+| Tag a wall | `E`, `F`, left mouse | `.`, `/`, `Numpad 2` | `X` |
+| Look around | Mouse (click to capture) | `Numpad 4` / `6` | Right stick |
+| Camera behind | `C` | `Numpad 5` | `Y` |
+| Pause | `Esc`, `P` | — | Start |
+
+Global keys: `M` mutes the radio, `]` skips to the next track, `1`–`4` on the
+title screen picks the player count, `F3` toggles the perf readout, `F4` toggles
+the ink outlines.
+
+## Local multiplayer
+
+Up to four skaters share one screen. Pick the count on the title screen — it
+shows which device will drive each seat.
+
+- Player 1 always gets keyboard + mouse.
+- Players 2–4 get gamepads in connection order.
+- If no gamepad is free, player 2 falls back to a second keyboard scheme
+  (arrows + number pad) so two people can play on one keyboard.
+
+Layouts are full screen for one, stacked halves for two, and a 2×2 grid for
+three or four; the spare cell in a three-player game shows live standings. Every
+skater has their own colours, camera, score, cans and heat, and the walls are
+shared — the run ends when the last one is painted and the highest score wins.
 
 ## How it plays
 
@@ -52,13 +68,16 @@ npm run preview  # serve the production bundle
   speed and they go over.
 - **Combos** bank when you stop doing anything interesting. Getting hit banks them
   at a quarter rate.
+- **Split-screen is a race.** The tag count is shared, so the wall you are lining
+  up may be gone before you reach it. Solo, a bust pauses the run; with company
+  it just costs you 20% of your score and you are back on your feet.
 
 ## Architecture
 
 ```
 src/
-  core/       game loop, input, event bus, math helpers
-  render/     cel renderer, sky, palette and toon materials
+  core/       game loop, player slots, input devices, event bus, math helpers
+  render/     cel renderer, sky, split-screen layouts, palette and materials
   world/      collision, rails, geometry primitives, batching builder, the level
   player/     skater controller, procedural character rig, chase camera
   gameplay/   graffiti, pickups, score, police, particles, mission rules
@@ -74,6 +93,14 @@ override, once lit with a depth texture attached — then runs a Roberts-cross e
 detect over depth and normals in a composite pass. That draws ink lines on
 silhouettes *and* interior creases without the per-mesh cost of inverted-hull
 outlines, and it's where the poster grade, boost smear and damage tint live.
+
+Split-screen views share those buffers: each player's camera renders into its own
+scissored rect and one composite pass covers the lot, so a second player costs an
+extra scene draw rather than an extra post chain. The composite knows where each
+pane is, so per-player effects stay inside their own view. One trap worth knowing:
+the viewport has to be set on the *render target*, not just on the renderer —
+three's shadow pass swaps render targets mid-`render()` and restores the viewport
+and scissor from whatever it comes back to.
 
 **`world/Collision.js`** is a static triangle soup in a uniform XZ spatial hash,
 with capsule depenetration and Möller–Trumbore raycasts. The whole district bakes

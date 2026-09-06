@@ -18,12 +18,35 @@ canvas.addEventListener('click', () => {
   else if (game.mode === MODE.PLAYING) game.input.requestPointerLock();
 });
 
+// Re-poll pads on the title screen so hot-plugged controllers show up.
+window.addEventListener('gamepadconnected', () => {
+  if (game.mode === MODE.TITLE) game.menus.refreshPlayers();
+});
+window.addEventListener('gamepaddisconnected', () => {
+  if (game.mode === MODE.TITLE) game.menus.refreshPlayers();
+});
+
 window.addEventListener('keydown', (e) => {
-  if (e.code === 'Enter' && game.mode === MODE.TITLE) game.onMenuAction('start');
+  if (game.mode === MODE.TITLE) {
+    if (e.code === 'Enter') game.onMenuAction('start');
+    if (e.code.startsWith('Digit')) {
+      const n = Number(e.code.slice(5));
+      if (n >= 1 && n <= 4) game.onMenuAction('players', n);
+    }
+  }
   if (e.code === 'KeyM') game.audio.setMusicEnabled(!game.audio.musicEnabled);
-  if (e.code === 'BracketRight') game.hud.banner(`NOW PLAYING: ${game.audio.nextTrack()}`, '#24d6ff', 2);
-  if (e.code === 'F3') { e.preventDefault(); game.hud.showFps = !game.hud.showFps; }
-  if (e.code === 'F4') { e.preventDefault(); game.renderer.outlinesEnabled = !game.renderer.outlinesEnabled; }
+  if (e.code === 'BracketRight') {
+    const name = game.audio.nextTrack();
+    for (const slot of game.slots) slot.hud.banner(`NOW PLAYING: ${name}`, '#24d6ff', 2);
+  }
+  if (e.code === 'F3') {
+    e.preventDefault();
+    game.slots[0].hud.showFps = !game.slots[0].hud.showFps;
+  }
+  if (e.code === 'F4') {
+    e.preventDefault();
+    game.renderer.outlinesEnabled = !game.renderer.outlinesEnabled;
+  }
 });
 
 window.__jsrf = game;

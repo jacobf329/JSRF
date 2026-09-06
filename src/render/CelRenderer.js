@@ -25,9 +25,14 @@ uniform float uNormalThreshold;
 uniform float uSaturation;
 uniform float uContrast;
 uniform float uVignette;
-uniform float uBoost;
-uniform float uDamage;
 uniform float uTime;
+
+// Split-screen: each view supplies its own rect (in UV space) plus the
+// intensities of the effects that are tied to a single skater.
+uniform int uViewCount;
+uniform vec4 uViewRect[4];
+uniform float uViewBoost[4];
+uniform float uViewDamage[4];
 
 varying vec2 vUv;
 
@@ -42,6 +47,23 @@ vec3 readNormal(vec2 uv) {
 }
 
 void main() {
+  // Work out which player's pane this pixel belongs to.
+  vec4 rect = vec4(0.0, 0.0, 1.0, 1.0);
+  float boost = 0.0;
+  float damage = 0.0;
+  for (int i = 0; i < 4; i++) {
+    if (i >= uViewCount) break;
+    vec4 r = uViewRect[i];
+    if (vUv.x >= r.x && vUv.x <= r.x + r.z && vUv.y >= r.y && vUv.y <= r.y + r.w) {
+      rect = r;
+      boost = uViewBoost[i];
+      damage = uViewDamage[i];
+      break;
+    }
+  }
+  vec2 viewCentre = rect.xy + rect.zw * 0.5;
+  vec2 viewUv = (vUv - rect.xy) / rect.zw;
+
   vec2 o = uTexel * uOutlineWidth;
 
   // Roberts cross on both linear depth and view-space normals.
@@ -67,17 +89,18 @@ void main() {
 
   vec3 color = texture2D(tColor, vUv).rgb;
 
-  // Radial smear while boosting.
-  if (uBoost > 0.001) {
-    vec2 dir = vUv - vec2(0.5);
+  // Radial smear while boosting, kept inside this player's pane.
+  if (boost > 0.001) {
+    vec2 dir = vUv - viewCentre;
     vec3 smear = vec3(0.0);
     for (int i = 1; i <= 5; i++) {
       float t = float(i) / 5.0;
-      smear += texture2D(tColor, vUv - dir * t * 0.09 * uBoost).rgb;
+      vec2 uv = clamp(vUv - dir * t * 0.09 * boost, rect.xy + uTexel, rect.xy + rect.zw - uTexel);
+      smear += texture2D(tColor, uv).rgb;
     }
     smear /= 5.0;
-    float mask = smoothstep(0.12, 0.62, length(dir));
-    color = mix(color, smear, mask * uBoost * 0.85);
+    float mask = smoothstep(0.12, 0.62, length((vUv - viewCentre) / rect.zw) * 2.0 * 0.5);
+    color = mix(color, smear, mask * boost * 0.85);
   }
 
   color = mix(color, uOutlineColor, edge);
@@ -87,13 +110,13 @@ void main() {
   color = mix(vec3(luma), color, uSaturation);
   color = (color - 0.5) * uContrast + 0.5;
 
-  if (uDamage > 0.001) {
+  if (damage > 0.001) {
     float pulse = 0.5 + 0.5 * sin(uTime * 18.0);
-    float ring = smoothstep(0.25, 0.85, length(vUv - vec2(0.5)));
-    color = mix(color, vec3(0.95, 0.12, 0.18), ring * uDamage * (0.45 + 0.35 * pulse));
+    float ring = smoothstep(0.25, 0.85, length(viewUv - vec2(0.5)));
+    color = mix(color, vec3(0.95, 0.12, 0.18), ring * damage * (0.45 + 0.35 * pulse));
   }
 
-  float vig = 1.0 - uVignette * pow(length(vUv - vec2(0.5)) * 1.32, 2.4);
+  float vig = 1.0 - uVignette * pow(length(viewUv - vec2(0.5)) * 1.32, 2.4);
   color *= clamp(vig, 0.0, 1.0);
 
   gl_FragColor = vec4(max(color, 0.0), 1.0);
@@ -171,9 +194,14 @@ export class CelRenderer {
         uSaturation: { value: 1.22 },
         uContrast: { value: 1.06 },
         uVignette: { value: 0.34 },
-        uBoost: { value: 0 },
-        uDamage: { value: 0 },
         uTime: { value: 0 },
+        uViewCount: { value: 1 },
+        uViewRect: { value: [
+          new THREE.Vector4(0, 0, 1, 1), new THREE.Vector4(0, 0, 1, 1),
+          new THREE.Vector4(0, 0, 1, 1), new THREE.Vector4(0, 0, 1, 1),
+        ] },
+        uViewBoost: { value: [0, 0, 0, 0] },
+        uViewDamage: { value: [0, 0, 0, 0] },
       },
     });
 
@@ -218,12 +246,97 @@ export class CelRenderer {
     if (u) u.value = value;
   }
 
-  render(scene, camera, options = {}) {
-    const { hideDuringNormalPass = [], time = 0 } = options;
+  /**
+   * Tell the composite pass where each player's pane is. `rects` are CSS
+   * pixels with a top-left origin; they are converted to bottom-left UVs.
+   */
+  setViewRects(rects) {
+    const u = this.compositeMaterial.uniforms;
+    u.uViewCount.value = Math.min(4, rects.length);
+    for (let i = 0; i < 4; i++) {
+      const r = rects[Math.min(i, rects.length - 1)];
+      const v = u.uViewRect.value[i];
+      if (!r) { v.set(0, 0, 1, 1); continue; }
+      v.set(
+        r.x / this.width,
+        (this.height - (r.y + r.height)) / this.height,
+        r.width / this.width,
+        r.height / this.height,
+      );
+    }
+  }
+
+  /** Per-player effect intensities for the composite pass. */
+  setViewEffect(index, boost, damage) {
+    if (index < 0 || index > 3) return;
+    const u = this.compositeMaterial.uniforms;
+    u.uViewBoost.value[index] = boost;
+    u.uViewDamage.value[index] = damage;
+  }
+
+  /**
+   * Bind `target` and restrict drawing to `rect` (CSS pixels, top-left origin);
+   * pass a null rect for the whole buffer.
+   *
+   * The viewport has to live on the render target itself, not just on the
+   * renderer: the shadow pass swaps render targets mid-`render()` and restores
+   * the viewport and scissor from the target it comes back to. Setting only
+   * `renderer.setViewport()` would be silently undone before a single scene
+   * triangle is drawn, and every view would end up full-screen.
+   */
+  _applyRect(rect, target) {
+    const dpr = this.renderer.getPixelRatio();
+
+    if (target) {
+      let x = 0;
+      let y = 0;
+      let w = target.width;
+      let h = target.height;
+      if (rect) {
+        x = Math.round(rect.x * dpr);
+        y = Math.round((this.height - (rect.y + rect.height)) * dpr);
+        w = Math.round(rect.width * dpr);
+        h = Math.round(rect.height * dpr);
+      }
+      target.viewport.set(x, y, w, h);
+      target.scissor.set(x, y, w, h);
+      target.scissorTest = !!rect;
+      this.renderer.setRenderTarget(target);
+      return;
+    }
+
+    this.renderer.setRenderTarget(null);
+    if (rect) {
+      const y = this.height - (rect.y + rect.height);
+      this.renderer.setViewport(rect.x, y, rect.width, rect.height);
+      this.renderer.setScissor(rect.x, y, rect.width, rect.height);
+      this.renderer.setScissorTest(true);
+    } else {
+      this.renderer.setScissorTest(false);
+      this.renderer.setViewport(0, 0, this.width, this.height);
+    }
+  }
+
+  /**
+   * Render one or more views.
+   *
+   * `views` is `[{ camera, rect }]`; a single full-screen view can omit `rect`.
+   * All views share the colour/normal/depth buffers and are composited in one
+   * final pass, so split-screen costs an extra scene draw rather than an extra
+   * post chain.
+   */
+  render(scene, views, options = {}) {
+    const list = Array.isArray(views) ? views : [{ camera: views }];
+    if (!list.length) return;
+    const { hideDuringNormalPass = [], time = 0, beforeView = null } = options;
+
+    // Stats are read after every pass, so they have to survive them.
+    this.renderer.info.autoReset = false;
+    this.renderer.info.reset();
 
     const u = this.compositeMaterial.uniforms;
-    u.uNear.value = camera.near;
-    u.uFar.value = camera.far;
+    u.uNear.value = list[0].camera.near;
+    u.uFar.value = list[0].camera.far;
     u.uTime.value = time;
 
     if (this.outlinesEnabled) {
@@ -237,19 +350,29 @@ export class CelRenderer {
       const prevBackground = scene.background;
       scene.overrideMaterial = this.normalMaterial;
       scene.background = null;
-      this.renderer.setRenderTarget(this.normalTarget);
+
+      this._applyRect(null, this.normalTarget);
       this.renderer.setClearColor(0x8080ff, 1);
       this.renderer.clear(true, true, false);
-      this.renderer.render(scene, camera);
+      for (const view of list) {
+        if (beforeView) beforeView(view);
+        this._applyRect(view.rect, this.normalTarget);
+        this.renderer.render(scene, view.camera);
+      }
+
       scene.overrideMaterial = prevOverride;
       scene.background = prevBackground;
       for (const [obj, vis] of restore) obj.visible = vis;
     }
 
-    this.renderer.setRenderTarget(this.colorTarget);
+    this._applyRect(null, this.colorTarget);
     this.renderer.setClearColor(0x000000, 1);
     this.renderer.clear(true, true, false);
-    this.renderer.render(scene, camera);
+    for (const view of list) {
+      if (beforeView) beforeView(view);
+      this._applyRect(view.rect, this.colorTarget);
+      this.renderer.render(scene, view.camera);
+    }
 
     // Snapshot scene stats before the composite pass overwrites them.
     this.stats = {
@@ -260,7 +383,7 @@ export class CelRenderer {
       textures: this.renderer.info.memory.textures,
     };
 
-    this.renderer.setRenderTarget(null);
+    this._applyRect(null, null);
     this.renderer.render(this.quadScene, this.quadCamera);
   }
 

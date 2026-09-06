@@ -120,7 +120,8 @@ await shot('05-spraying');
 const KEY = { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' };
 for (let i = 0; i < 10; i++) {
   const next = await page.evaluate(() => {
-    const s = window.__jsrf.graffiti.session;
+    const g = window.__jsrf;
+    const s = g.graffiti.sessionFor(g.player);
     return s ? s.sequence[s.index] : null;
   });
   if (!next) break;
@@ -155,6 +156,61 @@ await gwait(1.5);
 await page.keyboard.up('a');
 await shot('07-heat');
 
+// --- four-player split screen ---
+await page.evaluate(() => {
+  const g = window.__jsrf;
+  g.setMode('title');
+  g.setPlayerCount(4);
+  g.restart();
+  // Spread them out so every pane shows something different.
+  g.slots.forEach((slot, i) => {
+    const a = (i / 4) * Math.PI * 2;
+    slot.player.position.set(Math.cos(a) * 30, 1, Math.sin(a) * 30);
+    slot.player.velocity.set(0, 0, 0);
+    slot.player.heading = a + Math.PI;
+    slot.player.invulnerable = 0;
+    slot.followCamera.reset(slot.player);
+    slot.score.total = 1000 * (i + 1);
+  });
+});
+await gwait(1.2);
+await shot('08-fourplayer');
+
+const splitState = await page.evaluate(() => {
+  const g = window.__jsrf;
+  return {
+    players: g.playerCount,
+    rects: g.slots.map((s) => `${s.rect.width}x${s.rect.height}@${s.rect.x},${s.rect.y}`),
+    devices: g.slots.map((s) => s.input.label),
+    drawCalls: g.renderer.stats.calls,
+  };
+});
+
+await page.evaluate(() => {
+  const g = window.__jsrf;
+  g.setPlayerCount(3);
+  g.restart();
+  g.slots.forEach((s) => { s.player.invulnerable = 0; s.score.total = 4200 * (s.index + 1); });
+});
+await gwait(0.8);
+await shot('09-threeplayer');
+
+await page.evaluate(() => {
+  const g = window.__jsrf;
+  g.setPlayerCount(2);
+  g.restart();
+  g.slots.forEach((s) => { s.player.invulnerable = 0; });
+});
+await gwait(0.8);
+await shot('10-twoplayer');
+
+await page.evaluate(() => {
+  const g = window.__jsrf;
+  g.setPlayerCount(1);
+  g.restart();
+});
+await gwait(0.5);
+
 const state = await page.evaluate(() => {
   const g = window.__jsrf;
   return {
@@ -174,7 +230,8 @@ const state = await page.evaluate(() => {
     triangles: g.renderer.stats.triangles,
     collisionTris: g.level.collision.triCount,
     rails: g.level.rails.rails.length,
-    fps: Math.round(g.hud.fps),
+    fps: Math.round(g.slots[0].hud.fps),
+    players: g.playerCount,
   };
 });
 
@@ -182,6 +239,8 @@ console.log('--- grind check ---');
 console.log(JSON.stringify(grind));
 console.log('--- wallride check ---');
 console.log(JSON.stringify(wallride));
+console.log('--- split screen ---');
+console.log(JSON.stringify(splitState, null, 2));
 console.log('--- state ---');
 console.log(JSON.stringify(state, null, 2));
 if (errors.length) {

@@ -711,14 +711,38 @@ export class Level {
     this.group.add(fill);
   }
 
-  /** Keeps the shadow frustum around the player, snapped to avoid shimmer. */
-  updateShadows(focus) {
+  /**
+   * Keep the shadow frustum around the skaters, snapped to texels so it does
+   * not shimmer. In split-screen it widens to cover however far apart they are.
+   */
+  updateShadows(focusPoints) {
     if (!this.sun) return;
-    const texel = 140 / 2048;
-    const sx = Math.round(focus.x / texel) * texel;
-    const sz = Math.round(focus.z / texel) * texel;
+    const points = Array.isArray(focusPoints) ? focusPoints : [focusPoints];
+    if (!points.length) return;
+
+    let cx = 0;
+    let cz = 0;
+    for (const p of points) { cx += p.x; cz += p.z; }
+    cx /= points.length;
+    cz /= points.length;
+
+    let spread = 0;
+    for (const p of points) spread = Math.max(spread, Math.hypot(p.x - cx, p.z - cz));
+
+    // Beyond this the map is simply too spread out for one cascade; the
+    // shadows go soft rather than popping in and out.
+    const size = Math.min(190, Math.max(70, spread * 1.25 + 45));
+    const cam = this.sun.shadow.camera;
+    if (Math.abs(cam.right - size) > 1) {
+      cam.left = -size; cam.right = size; cam.top = size; cam.bottom = -size;
+      cam.updateProjectionMatrix();
+    }
+
+    const texel = (size * 2) / 2048;
+    const sx = Math.round(cx / texel) * texel;
+    const sz = Math.round(cz / texel) * texel;
     this.sun.target.position.set(sx, 0, sz);
-    this.sun.position.set(sx, 0, sz).addScaledVector(this.sunDirection, 140);
+    this.sun.position.set(sx, 0, sz).addScaledVector(this.sunDirection, 160);
     this.sun.target.updateMatrixWorld();
   }
 }
