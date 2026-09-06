@@ -33,6 +33,7 @@ export class Menus {
           <div class="picker__devices" data-devices></div>
         </div>
 
+        <div class="picker__best" data-best></div>
         <button class="btn btn--big" data-action="start">Skate</button>
         ${controlsMarkup()}
       </div>
@@ -59,6 +60,7 @@ export class Menus {
       <div class="screen clickable" data-screen="results">
         <div class="screen__sub" data-results-sub>District tagged</div>
         <h1 class="screen__title" data-results-rank>RANK: JET</h1>
+        <div class="results__record" data-results-record style="display:none">NEW RECORD</div>
         <div data-results-body></div>
         <div class="btn-row">
           <button class="btn" data-action="restart">Run it again</button>
@@ -74,6 +76,7 @@ export class Menus {
     }
     this.$players = this.el.querySelector('[data-players]');
     this.$devices = this.el.querySelector('[data-devices]');
+    this.$best = this.el.querySelector('[data-best]');
 
     for (let n = 1; n <= MAX_PLAYERS; n++) {
       const btn = document.createElement('button');
@@ -95,6 +98,12 @@ export class Menus {
     this.current = null;
     this.onAction = null;
     this.refreshPlayers();
+  }
+
+  /** The record for the current player count, or nothing if there isn't one. */
+  setBest(score) {
+    if (!this.$best) return;
+    this.$best.textContent = score > 0 ? `Best: ${formatScore(score)}` : '';
   }
 
   /** Reflect the chosen player count and show what will drive each seat. */
@@ -141,6 +150,9 @@ export class Menus {
     this.el.querySelector('[data-results-sub]').textContent = stats.complete
       ? `Shibuya Terminal tagged in ${formatTime(stats.time)}`
       : 'Run ended';
+    const banner = this.el.querySelector('[data-results-record]');
+    banner.textContent = stats.record ? 'NEW RECORD' : '';
+    banner.style.display = stats.record ? '' : 'none';
 
     const body = solo
       ? `<div class="results">

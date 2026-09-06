@@ -16,6 +16,8 @@ import { Mission } from '../gameplay/Mission.js';
 import { Menus } from '../ui/Menus.js';
 import { AudioEngine } from '../audio/Audio.js';
 import { MAX_PLAYERS } from './Constants.js';
+import { Profile } from './Profile.js';
+import { Platform } from './Platform.js';
 
 export { MAX_PLAYERS };
 
@@ -44,6 +46,7 @@ export class Game {
 
     this.input = new InputManager(canvas);
     this.audio = new AudioEngine();
+    this.profile = new Profile();
     this.clock = new THREE.Clock();
     this.time = 0;
     this.mode = MODE.TITLE;
@@ -98,7 +101,24 @@ export class Game {
     this._bindFeedback();
     this.setMode(MODE.TITLE);
     this.resize();
+
+    // Settings and records arrive asynchronously (a file in the desktop app,
+    // storage in a browser); the title screen is already up by then, so apply
+    // them when they land rather than blocking the boot on them.
+    this.profile.load().then((data) => this._applyProfile(data)).catch(() => { });
+    window.addEventListener('beforeunload', () => this.profile.flush());
+
     return this;
+  }
+
+  _applyProfile(data) {
+    const settings = data.settings;
+    if (settings.playerCount !== this.playerCount) this.setPlayerCount(settings.playerCount);
+    this.audio.setMasterVolume(settings.masterVolume);
+    this.audio.setMusicEnabled(settings.musicEnabled);
+    for (const slot of this.allSlots) slot.hud.showFps = !!settings.showFps && slot.index === 0;
+    this.menus.refreshPlayers();
+    this.menus.setBest(this.profile.bestFor(this.playerCount));
   }
 
   // ------------------------------------------------------------ player slots
@@ -177,6 +197,10 @@ export class Game {
       }
     });
     e.on('mission:complete', ({ stats }) => {
+      const top = stats.winner ? stats.winner.score : 0;
+      stats.record = this.profile.recordScore(this.playerCount, top);
+      stats.previousBest = this.profile.bestFor(this.playerCount);
+      this.profile.recordRun({ tags: stats.taggedCount, time: stats.time });
       this.menus.showResults(stats);
       this.setMode(MODE.RESULTS);
     });
@@ -208,7 +232,9 @@ export class Game {
     switch (action) {
       case 'players':
         this.setPlayerCount(value);
+        this.profile.set('playerCount', value);
         this.menus.refreshPlayers();
+        this.menus.setBest(this.profile.bestFor(value));
         break;
       case 'start':
         this.audio.init();

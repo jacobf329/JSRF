@@ -10,8 +10,15 @@ fs.mkdirSync(OUTDIR, { recursive: true });
 const server = await createServer({ server: { port: 5199, host: '127.0.0.1' }, logLevel: 'error' });
 await server.listen();
 
+function chromePath() {
+  // This container ships a Chromium at a fixed path; CI and dev machines use
+  // whatever Playwright downloaded. JSRF_CHROME overrides both.
+  const local = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+  return process.env.JSRF_CHROME || (fs.existsSync(local) ? local : undefined);
+}
+
 const browser = await chromium.launch({
-  executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
+  executablePath: chromePath(),
   args: [
     '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
     '--disable-gpu-sandbox', '--no-sandbox', '--ignore-gpu-blocklist',

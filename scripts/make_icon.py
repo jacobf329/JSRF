@@ -7,7 +7,6 @@ import struct
 import zlib
 from pathlib import Path
 
-SIZE = 256
 INK = (0x14, 0x16, 0x26, 255)
 PINK = (0xff, 0x2f, 0x87, 255)
 CYAN = (0x24, 0xd6, 0xff, 255)
@@ -73,15 +72,25 @@ def fill_circle(px, cx, cy, radius, colour):
             )
 
 
-def stroke(x_top, width, lean):
+def stroke(size, x_top, width, lean):
     """One leaning bar, top-left anchored at x_top."""
-    top, bottom = SIZE * 0.20, SIZE * 0.74
+    top, bottom = size * 0.20, size * 0.74
     return [
         (x_top, top),
         (x_top + width, top),
         (x_top + width - lean, bottom),
         (x_top - lean, bottom),
     ]
+
+
+def draw(size):
+    px = blank(size, INK)
+    lean = size * 0.16
+    width = size * 0.20
+    fill_poly(px, stroke(size, size * 0.30, width, lean), PINK)
+    fill_poly(px, stroke(size, size * 0.60, width, lean), CYAN)
+    fill_circle(px, size * 0.775, size * 0.80, size * 0.105, YELLOW)
+    return png_bytes(px)
 
 
 def png_bytes(px):
@@ -112,18 +121,13 @@ def ico_bytes(png, size):
 
 def main():
     root = Path(__file__).resolve().parent.parent
-    px = blank(SIZE, INK)
-
-    lean = SIZE * 0.16
-    width = SIZE * 0.20
-    fill_poly(px, stroke(SIZE * 0.30, width, lean), PINK)
-    fill_poly(px, stroke(SIZE * 0.60, width, lean), CYAN)
-    fill_circle(px, SIZE * 0.775, SIZE * 0.80, SIZE * 0.105, YELLOW)
-
-    png = png_bytes(px)
-    (root / 'icon.png').write_bytes(png)
-    (root / 'icon.ico').write_bytes(ico_bytes(png, SIZE))
-    print(f'icon.png {len(png)} bytes, icon.ico {len(png) + 22} bytes')
+    # 512 for the app icon (electron-builder wants at least that for macOS),
+    # 256 inside the .ico, which is the largest size the format addresses.
+    large = draw(512)
+    small = draw(256)
+    (root / 'icon.png').write_bytes(large)
+    (root / 'icon.ico').write_bytes(ico_bytes(small, 256))
+    print(f'icon.png {len(large)} bytes (512px), icon.ico {len(small) + 22} bytes (256px)')
 
 
 if __name__ == '__main__':

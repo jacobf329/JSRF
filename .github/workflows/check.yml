@@ -1,0 +1,28 @@
+# Every push: make sure the game still builds and still boots.
+name: Check
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  build-and-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run build:single
+
+      - run: npx playwright install --with-deps chromium
+
+      - name: The single-file build must boot and play
+        run: xvfb-run -a node tools/verify-single.mjs game/JetSetRadioFuture.html
+
+      - name: The desktop app must boot, play and write a save
+        run: xvfb-run -a node tools/verify-app.mjs

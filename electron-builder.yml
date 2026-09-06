@@ -1,0 +1,64 @@
+appId: com.jacobf329.jetsetradiofuture
+productName: Jet Set Radio Future
+copyright: Jacob Floyd
+
+directories:
+  output: release
+  buildResources: build
+
+# The renderer is already bundled into dist/ by Vite, so the only node_modules
+# that need shipping are the ones the main process requires at runtime.
+files:
+  - app/**/*
+  - dist/**/*
+  - icon.png
+  - package.json
+  - '!dist/**/*.map'
+  - '!**/node_modules/*/{test,__tests__,tests,example,examples,doc,docs}/**'
+  - '!**/*.{md,markdown,map}'
+
+# Left off deliberately. An asar archive is invisible to Chromium's network
+# stack, so assets inside one cannot be range-requested or streamed -- which is
+# exactly what a game's audio and video need. Loose files also make patching an
+# asset far easier. The protocol handler copes with either.
+asar: false
+compression: normal
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: icon.ico
+  # Unsigned builds warn on first run; signing needs a certificate we do not
+  # have. Documented rather than hidden.
+  signAndEditExecutable: true
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: Jet Set Radio Future
+  artifactName: ${productName}-Setup-${version}.${ext}
+  deleteAppDataOnUninstall: false
+
+mac:
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+  category: public.app-category.action-games
+  icon: icon.png
+
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+  category: Game
+  icon: icon.png
+  synopsis: Cel-shaded skating, up to four players on one screen
+
+publish:
+  provider: github
+  owner: jacobf329
+  repo: JSRF

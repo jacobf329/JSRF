@@ -3,19 +3,31 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "A Jet Set Radio Future inspired cel-shaded skating game",
+  "description": "A cel-shaded skating game inspired by Jet Set Radio Future",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
     "build:single": "node scripts/build-single.mjs",
-    "icon": "python3 scripts/make_icon.py"
+    "icon": "python3 scripts/make_icon.py",
+    "app": "npm run build && electron .",
+    "app:start": "electron .",
+    "app:pack": "npm run build && electron-builder --dir",
+    "app:dist": "npm run build && electron-builder"
   },
   "dependencies": {
-    "three": "^0.185.1"
+    "electron-updater": "^6.8.9"
   },
   "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8",
     "playwright": "^1.63.0",
-    "vite": "^6.0.0"
-  }
+    "vite": "^6.0.0",
+    "three": "^0.185.1"
+  },
+  "main": "app/main.cjs",
+  "author": {
+    "name": "Jacob Floyd"
+  },
+  "license": "UNLICENSED"
 }

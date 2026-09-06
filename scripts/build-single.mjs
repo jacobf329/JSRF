@@ -56,15 +56,17 @@ const html = `<!doctype html>
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,${Buffer.from(favicon).toString('base64')}" />
     <title>JET SET RADIO FUTURE</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Barlow+Condensed:wght@600;700&display=swap" rel="stylesheet" />
     <style>${css}</style>
   </head>
   <body>
     <div id="app">
       <canvas id="viewport"></canvas>
       <div id="ui"></div>
+      <div id="boot">
+        <div class="boot__title">JET SET<br />RADIO FUTURE</div>
+        <div class="boot__bar"><div class="boot__fill"></div></div>
+        <div class="boot__note">Building Shibuya Terminal</div>
+      </div>
     </div>
     <noscript>This game needs JavaScript and WebGL.</noscript>
     <script>${safeJs}</script>

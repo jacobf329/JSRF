@@ -1,3 +1,28 @@
+/* Self-hosted, so the app looks right on first launch and offline. Vite emits
+   these as cached files in the normal build and inlines them in the
+   single-file one. */
+@font-face {
+  font-family: 'Archivo Black';
+  src: url('./fonts/ArchivoBlack-400.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Barlow Condensed';
+  src: url('./fonts/BarlowCondensed-600.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Barlow Condensed';
+  src: url('./fonts/BarlowCondensed-700.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   --ink: #141626;
   --paper: #f6f2e6;
@@ -567,3 +592,69 @@ html, body {
   color: var(--yellow);
 }
 .scoreboard tbody tr:first-child { background: rgba(255, 210, 30, 0.14); }
+
+.picker__best {
+  font-size: clamp(15px, 2vh, 19px);
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: var(--cyan);
+}
+
+.results__record {
+  font-family: 'Archivo Black', Impact, sans-serif;
+  font-size: clamp(20px, 3.4vh, 32px);
+  color: var(--lime);
+  text-shadow: 3px 3px 0 var(--ink);
+  transform: skewX(-8deg);
+  animation: blink 1.05s steps(2, end) infinite;
+}
+
+/* ------------------------------------------------------------- loading ---- */
+
+/* Building the district and compiling shaders takes a moment on a cold start,
+   and an empty window for that long reads as a crash. */
+#boot {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 18px;
+  background: #0b0d16;
+  z-index: 50;
+  transition: opacity 0.35s ease;
+}
+#boot.is-done { opacity: 0; pointer-events: none; }
+.boot__title {
+  font-family: 'Archivo Black', Impact, sans-serif;
+  font-size: clamp(28px, 6vw, 64px);
+  line-height: 0.9;
+  color: #fff;
+  text-shadow: 4px 4px 0 var(--pink), 8px 8px 0 var(--cyan);
+  transform: skewX(-8deg);
+  text-align: center;
+}
+.boot__bar {
+  width: min(320px, 60vw);
+  height: 12px;
+  border: 3px solid #fff;
+  transform: skewX(-16deg);
+  overflow: hidden;
+}
+.boot__fill {
+  height: 100%;
+  width: 40%;
+  background: linear-gradient(90deg, var(--cyan), var(--lime));
+  animation: boot-slide 1.1s ease-in-out infinite;
+}
+@keyframes boot-slide {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(320%); }
+}
+.boot__note {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 17px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--yellow);
+}
