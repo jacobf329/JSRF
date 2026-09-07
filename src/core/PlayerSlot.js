@@ -22,7 +22,7 @@ export class PlayerSlot {
     this.model = new PlayerModel(index);
     scene.add(this.model.root);
 
-    this.camera = new THREE.PerspectiveCamera(64, 16 / 9, 0.1, 700);
+    this.camera = new THREE.PerspectiveCamera(64, 16 / 9, 0.1, 460);
     this.followCamera = new FollowCamera(this.camera, level.collision);
     this.followCamera.reset(this.player);
 

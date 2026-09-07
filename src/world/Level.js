@@ -4,7 +4,7 @@ import { toon, flat, glass } from '../render/Materials.js';
 import { Builder } from './Builder.js';
 import { CollisionWorld, SURFACE } from './Collision.js';
 import { RailNetwork, Rail, RAIL_TYPE } from './Rail.js';
-import { BUILDINGS, CAN_SPOTS, LEVEL, POLICE_POSTS, TAG_SPOTS } from './LevelData.js';
+import { BUILDINGS, CAN_SPOTS, DISTRICTS, LEVEL, POLICE_POSTS, TAG_SPOTS, districtAt } from './LevelData.js';
 import {
   bankGeo, boxGeo, cylGeo, pillarGeo, quarterPipeGeo, sphereGeo,
   stairsGeo, textureCanvas, tubeGeo, wedgeGeo,
@@ -12,6 +12,13 @@ import {
 import { makeRng } from '../core/MathUtils.js';
 
 const HALF = LEVEL.bounds;
+
+/** Wall panel sizes a tag can be painted at. */
+const TAG_SIZES = {
+  medium: { w: 6, h: 4.4 },
+  large: { w: 6.5, h: 4.8 },
+  xl: { w: 8, h: 6 },
+};
 const BOWL = LEVEL.bowl;
 const EXPRESSWAY_X = -110;
 const EXPRESSWAY_Y = 14;
@@ -42,13 +49,23 @@ export class Level {
   }
 
   build() {
+    this.b.setChunk('ground');
     this._ground();
+    this.b.setChunk('terminal');
     this._bowl();
     this._buildings();
     this._expressway();
     this._skatepark();
     this._stairsAndLedges();
     this._streetDressing();
+    this.b.setChunk('heights');
+    this._heights();
+    this.b.setChunk('hill');
+    this._hill();
+    this.b.setChunk('drain');
+    this._drain();
+    this.b.setChunk('bantam');
+    this._bantam();
     this._railNetwork();
 
     const baked = this.b.finish('district', this.collision);
@@ -213,7 +230,10 @@ export class Level {
   // --------------------------------------------------------------- buildings
 
   _buildings() {
-    for (const spec of BUILDINGS) this._building(spec);
+    for (const spec of BUILDINGS) {
+      this.b.setChunk(spec.district || 'terminal');
+      this._building(spec);
+    }
   }
 
   _building(spec) {
@@ -514,6 +534,10 @@ export class Level {
   _addRail(points, options) {
     const rail = new Rail(points, options);
     this.rails.add(rail);
+    // Merge a rail's tube with the district it runs through, so it is culled
+    // along with everything else over there.
+    const mid = rail.getPointAt(rail.totalLength * 0.5, new THREE.Vector3());
+    this.b.setChunk(districtAt(mid.x, mid.z).id);
     this._railVisual(rail, options);
     return rail;
   }
@@ -605,6 +629,12 @@ export class Level {
       ], { type: RAIL_TYPE.LEDGE, closed: true, curved: false, name: 'roof' });
     }
 
+    // 5b. The other districts.
+    this._heightsRails(V);
+    this._hillRails(V);
+    this._drainRails(V);
+    this._bantamRails(V);
+
     // 6. Sagging wires linking rooftops -- the fast lane across the city.
     const wireLinks = [
       [[-76, -62, 30], [-36, -64, 22]],
@@ -620,6 +650,17 @@ export class Level {
       [[-54, 76, 32], [-74, 30, 26]],
       [[-74, 30, 26], [-78, -12, 36]],
       [[-78, -12, 36], [-76, -62, 30]],
+      // Rokkaku Heights, roof to roof.
+      [[-100, -200, 62], [-40, -215, 48]],
+      [[-40, -215, 48], [20, -195, 70]],
+      [[20, -195, 70], [86, -210, 54]],
+      [[86, -210, 54], [128, -240, 36]],
+      [[-70, -270, 40], [0, -275, 58]],
+      [[0, -275, 58], [74, -272, 44]],
+      [[-134, -246, 34], [-70, -270, 40]],
+      [[-100, -200, 62], [-70, -270, 40]],
+      // The long one: out of the terminal and up into the Heights.
+      [[0, -66, 44], [20, -195, 70]],
       // Cross-town shortcuts over the square.
       [[-44, -18, 14], [44, -22, 12]],
       [[-44, 22, 11], [44, 20, 16]],
@@ -661,11 +702,305 @@ export class Level {
     this._addRail([V(51.5, 0.82, -38), V(51.5, 0.82, 40)], { type: RAIL_TYPE.LEDGE, curved: false });
   }
 
+
+  // ------------------------------------------------------ Rokkaku Heights
+
+  /**
+   * Towers, and the ways between them.
+   *
+   * The towers themselves come from the building data; what makes the district
+   * a place to skate rather than a place to look at is the skybridges, which
+   * turn nine separate roofs into one connected route.
+   */
+  _heights() {
+    const deck = toon(PALETTE.rooftop);
+    const steel = toon(PALETTE.steel);
+
+    this.skybridges = [
+      { a: [-100, -200], b: [-40, -215], y: 34 },
+      { a: [-40, -215], b: [20, -195], y: 40 },
+      { a: [20, -195], b: [86, -210], y: 44 },
+      { a: [-70, -270], b: [0, -275], y: 32 },
+      { a: [0, -275], b: [74, -272], y: 36 },
+      { a: [-100, -200], b: [-70, -270], y: 30 },
+      { a: [86, -210], b: [128, -240], y: 30 },
+    ];
+    for (const bridge of this.skybridges) {
+      const dx = bridge.b[0] - bridge.a[0];
+      const dz = bridge.b[1] - bridge.a[1];
+      const length = Math.hypot(dx, dz);
+      const angle = Math.atan2(dx, dz);
+      const cx = (bridge.a[0] + bridge.b[0]) / 2;
+      const cz = (bridge.a[1] + bridge.b[1]) / 2;
+
+      this.b.add(boxGeo(5.5, 0.5, length), deck, {
+        transform: { x: cx, y: bridge.y, z: cz, ry: angle }, surface: SURFACE.METAL,
+      });
+      for (const side of [-1, 1]) {
+        this.b.add(boxGeo(0.35, 1.0, length), steel, {
+          transform: { x: cx + Math.cos(angle) * side * 2.6, y: bridge.y + 0.75, z: cz - Math.sin(angle) * side * 2.6, ry: angle },
+          surface: SURFACE.METAL,
+        });
+      }
+    }
+
+    // A roll-in from street level, so the district is enterable without
+    // arriving from a wire.
+    this.b.add(wedgeGeo(14, 9, 30), toon(PALETTE.concrete), {
+      transform: { x: -10, y: 0, z: -165, ry: Math.PI }, surface: SURFACE.ROAD,
+    });
+    this.b.add(boxGeo(26, 9, 16), toon(PALETTE.concrete), { transform: { x: -10, y: 4.5, z: -186 } });
+
+    // Ledges and banks at ground level.
+    for (const [x, z, w, d] of [[-120, -170, 26, 4], [60, -170, 26, 4], [-30, -240, 4, 30], [110, -200, 4, 26]]) {
+      this.b.add(boxGeo(w, 1.2, d), toon(PALETTE.curb), { transform: { x, y: 0.6, z } });
+    }
+    for (const [x, z, ry] of [[-150, -220, -Math.PI / 2], [150, -220, Math.PI / 2]]) {
+      this.b.add(quarterPipeGeo(6, 30, 10, 0.5), toon(PALETTE.concrete), { transform: { x, y: 0, z, ry } });
+    }
+  }
+
+  // -------------------------------------------------------- Dogenzaka Hill
+
+  /**
+   * The descent.
+   *
+   * One long ramp you bomb down, with guard walls to ride and kickers to clear.
+   * The whole district is about carrying speed, so nothing is placed where it
+   * would stop you dead.
+   */
+  _hill() {
+    const RISE = 22;
+    const FROM = 160;
+    const TO = 290;
+    const depth = TO - FROM;
+    const slope = Math.atan2(RISE, depth);
+    const road = toon(PALETTE.asphaltDark);
+    const wall = toon(PALETTE.concrete);
+
+    this.hill = { from: FROM, to: TO, rise: RISE, slope, halfWidth: 60 };
+
+    this.b.add(wedgeGeo(120, RISE, depth), road, {
+      transform: { x: 0, y: 0, z: (FROM + TO) / 2 }, surface: SURFACE.ROAD,
+    });
+
+    // Guard walls, tilted to follow the grade.
+    const wallLength = Math.hypot(depth, RISE);
+    for (const side of [-1, 1]) {
+      this.b.add(boxGeo(2, 3.2, wallLength), wall, {
+        transform: { x: side * 59, y: RISE / 2 + 1.4, z: (FROM + TO) / 2, rx: -slope },
+        surface: SURFACE.WALL,
+      });
+    }
+
+    // A central island splitting the road, and kickers either side of it.
+    for (let i = 0; i < 4; i++) {
+      const t = 0.18 + i * 0.2;
+      const z = FROM + depth * t;
+      const y = RISE * t;
+      this.b.add(boxGeo(9, 1.1, 20), toon(PALETTE.curb), {
+        transform: { x: 0, y: y + 0.55, z, rx: -slope },
+      });
+      for (const side of [-1, 1]) {
+        this.b.add(wedgeGeo(12, 2.4, 7), road, {
+          transform: { x: side * 30, y, z: z + 14, ry: Math.PI, rx: -slope },
+        });
+      }
+    }
+
+    // The lip at the bottom, so the descent throws you into the terminal.
+    this.b.add(bankGeo(4, 40, 10), road, {
+      transform: { x: 0, y: 0, z: FROM - 6, ry: Math.PI }, surface: SURFACE.ROAD,
+    });
+  }
+
+  // ---------------------------------------------------------- Kogane Drain
+
+  /**
+   * A drainage channel: two facing transitions running the height of the map.
+   *
+   * Built up from the ground rather than dug into it, because the street is one
+   * slab and carving a trench out of it would mean rebuilding the whole ground
+   * plane around a second hole.
+   */
+  _drain() {
+    const concrete = toon(PALETTE.concrete);
+    const RADIUS = 10;
+    const LENGTH = HALF * 2;
+    const WEST = -254;
+    const EAST = -196;
+
+    // Facing quarter pipes. Default orientation rises toward -Z, so a quarter
+    // turn each way points them at each other across the channel.
+    this.b.add(quarterPipeGeo(RADIUS, LENGTH, 12, 1), concrete, {
+      transform: { x: WEST + RADIUS / 2, y: 0, z: 0, ry: Math.PI / 2 },
+    });
+    this.b.add(quarterPipeGeo(RADIUS, LENGTH, 12, 1), concrete, {
+      transform: { x: EAST - RADIUS / 2, y: 0, z: 0, ry: -Math.PI / 2 },
+    });
+
+    // Lips along the top of each wall, for grinding the rim of the channel.
+    for (const x of [WEST, EAST]) {
+      this.b.add(boxGeo(3, 1, LENGTH), toon(PALETTE.curb), {
+        transform: { x, y: RADIUS + 0.5, z: 0 }, castShadow: false,
+      });
+    }
+
+    // Pipes crossing overhead, and the outfalls they run into.
+    const steel = toon(PALETTE.steel);
+    for (let i = -2; i <= 2; i++) {
+      const z = i * 110;
+      this.b.add(cylGeo(1.1, 1.1, 62, 10), steel, {
+        transform: { x: WEST, y: RADIUS + 7, z, rz: Math.PI / 2 }, surface: SURFACE.METAL,
+      });
+      this.b.add(cylGeo(2.4, 2.4, 5, 10), concrete, {
+        transform: { x: WEST - 2, y: 2.4, z: z + 30, rz: Math.PI / 2 },
+      });
+    }
+
+    // Roll-in at the north end and a bank at the south, so it is a run rather
+    // than a dead end.
+    this.b.add(wedgeGeo(50, 10, 34), concrete, {
+      transform: { x: -225, y: 0, z: -HALF + 40, ry: 0 }, surface: SURFACE.ROAD,
+    });
+    this.b.add(bankGeo(7, 50, 12), concrete, {
+      transform: { x: -225, y: 0, z: HALF - 40, ry: Math.PI }, surface: SURFACE.ROAD,
+    });
+
+    // A funbox on the channel floor to break up the run.
+    this.b.add(boxGeo(16, 2, 12), concrete, { transform: { x: -225, y: 1, z: 0 } });
+    for (const sz of [-1, 1]) {
+      this.b.add(wedgeGeo(16, 2, 8), concrete, {
+        transform: { x: -225, y: 0, z: sz * 10, ry: sz > 0 ? Math.PI : 0 },
+      });
+    }
+  }
+
+  // ---------------------------------------------------------- Bantam Street
+
+  /** A market grid: tight alleys, stalls to clear, and rails the length of them. */
+  _bantam() {
+    const canopy = toon(PALETTE.bloodOrange, { steps: 2 });
+    const crate = toon(PALETTE.wood);
+    const kerb = toon(PALETTE.curb);
+
+    this.bantamAisles = [];
+    for (let ix = 0; ix < 5; ix++) {
+      const x = 161 + ix * 34;
+      this.bantamAisles.push(x);
+      // A kerb the length of each aisle, which doubles as its grind line.
+      this.b.add(boxGeo(1.4, 0.7, 280), kerb, { transform: { x, y: 0.35, z: 0 }, castShadow: false });
+    }
+
+    // Stalls and crates down the aisles: things to ollie rather than walls.
+    for (let i = 0; i < 46; i++) {
+      const x = this.bantamAisles[i % this.bantamAisles.length] + (this.rng() - 0.5) * 9;
+      const z = -140 + this.rng() * 280;
+      const h = 1.1 + this.rng() * 0.8;
+      this.b.add(pillarGeo(2.6, h, 2.2), crate, { transform: { x, y: 0, z } });
+      if (this.rng() > 0.45) {
+        this.b.add(boxGeo(4.6, 0.14, 3.4), canopy, {
+          transform: { x, y: h + 1.5, z }, collide: false,
+        });
+      }
+    }
+
+    // Ramps up onto the low roofs, so the district has a top layer too.
+    for (const [x, z, ry] of [[168, -60, -Math.PI / 2], [236, 60, Math.PI / 2], [270, -100, -Math.PI / 2]]) {
+      this.b.add(wedgeGeo(10, 9, 18), toon(PALETTE.concrete), { transform: { x, y: 0, z, ry } });
+    }
+  }
+
+
+  _heightsRails(V) {
+    // The skybridges are grindable along both edges.
+    for (const bridge of this.skybridges || []) {
+      const angle = Math.atan2(bridge.b[0] - bridge.a[0], bridge.b[1] - bridge.a[1]);
+      for (const side of [-1, 1]) {
+        const ox = Math.cos(angle) * side * 2.6;
+        const oz = -Math.sin(angle) * side * 2.6;
+        this._addRail([
+          V(bridge.a[0] + ox, bridge.y + 1.45, bridge.a[1] + oz),
+          V(bridge.b[0] + ox, bridge.y + 1.45, bridge.b[1] + oz),
+        ], { type: RAIL_TYPE.LEDGE, curved: false, name: 'skybridge' });
+      }
+    }
+    this._addRail([V(-120, 1.3, -170), V(-94, 1.3, -170)], { type: RAIL_TYPE.LEDGE, curved: false });
+    this._addRail([V(60, 1.3, -170), V(86, 1.3, -170)], { type: RAIL_TYPE.LEDGE, curved: false });
+    this._addRail([V(-30, 1.3, -255), V(-30, 1.3, -225)], { type: RAIL_TYPE.LEDGE, curved: false });
+  }
+
+  _hillRails(V) {
+    const { from, to, rise } = this.hill;
+    const depth = to - from;
+    const yAt = (z) => (rise * (z - from)) / depth;
+    // Both guard walls, and the island down the middle: three lines the whole
+    // length of the descent, which is what makes the hill a combo rather than
+    // just a fast bit of road.
+    for (const side of [-1, 1]) {
+      this._addRail([
+        V(side * 58, yAt(from + 4) + 3.4, from + 4),
+        V(side * 58, yAt(to - 4) + 3.4, to - 4),
+      ], { type: RAIL_TYPE.LEDGE, curved: false, name: 'hill-wall' });
+    }
+    this._addRail([
+      V(0, yAt(from + 10) + 1.25, from + 10),
+      V(0, yAt(to - 10) + 1.25, to - 10),
+    ], { type: RAIL_TYPE.RAIL, curved: false, name: 'hill-island', boost: 1.1 });
+  }
+
+  _drainRails(V) {
+    const LIP = 11.2;
+    for (const x of [-254, -196]) {
+      this._addRail([V(x, LIP, -HALF + 20), V(x, LIP, HALF - 20)],
+        { type: RAIL_TYPE.LEDGE, curved: false, name: 'drain-lip' });
+    }
+    // The overhead pipes, crossing the channel.
+    for (let i = -2; i <= 2; i++) {
+      this._addRail([V(-256, 17, i * 110), V(-194, 17, i * 110)],
+        { type: RAIL_TYPE.POLE, curved: false, name: 'drain-pipe', boost: 1.1 });
+    }
+  }
+
+  _bantamRails(V) {
+    for (const x of this.bantamAisles || []) {
+      this._addRail([V(x, 0.92, -138), V(x, 0.92, 138)],
+        { type: RAIL_TYPE.LEDGE, curved: false, name: 'bantam-kerb' });
+    }
+  }
+
   // ------------------------------------------------------------- gameplay pts
 
+  /**
+   * Tag walls, from the buildings that own them plus the loose ones.
+   *
+   * Deriving a spot from its building's footprint means it is always on a real
+   * face: move the building and the graffiti moves with it, instead of ending
+   * up floating in a street or buried inside a wall.
+   */
   _tagSpots() {
-    for (let i = 0; i < TAG_SPOTS.length; i++) {
-      const s = TAG_SPOTS[i];
+    const specs = [];
+
+    for (const b of BUILDINGS) {
+      for (const tag of b.tags || []) {
+        const offset = tag.offset || 0;
+        let x = b.x;
+        let z = b.z;
+        let dir = 0;
+        switch (tag.side) {
+          case 'south': z = b.z + b.d / 2; dir = 0; x += offset; break;
+          case 'north': z = b.z - b.d / 2; dir = Math.PI; x += offset; break;
+          case 'east': x = b.x + b.w / 2; dir = Math.PI / 2; z += offset; break;
+          default: x = b.x - b.w / 2; dir = -Math.PI / 2; z += offset; break;
+        }
+        const size = TAG_SIZES[tag.size] || TAG_SIZES.medium;
+        specs.push({ x, y: tag.y, z, dir, w: size.w, h: size.h, size: tag.size, district: b.district });
+      }
+    }
+    specs.push(...TAG_SPOTS);
+
+    for (let i = 0; i < specs.length; i++) {
+      const s = specs[i];
       const normal = new THREE.Vector3(Math.sin(s.dir), 0, Math.cos(s.dir));
       const position = new THREE.Vector3(s.x, s.y, s.z).addScaledVector(normal, 0.08);
       this.tagSpots.push({
@@ -676,6 +1011,7 @@ export class Level {
         width: s.w,
         height: s.h,
         size: s.size ?? 'medium',
+        district: s.district || districtAt(s.x, s.z).id,
       });
     }
   }

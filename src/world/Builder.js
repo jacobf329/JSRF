@@ -5,13 +5,26 @@ import { place } from './Geo.js';
 
 /**
  * Accumulates level geometry and merges it into one mesh per
- * (material, surface, shadow) combination. The whole district then draws in a
- * few dozen calls instead of a few thousand.
+ * (chunk, material, surface, shadow) combination.
+ *
+ * Merging is what keeps a city of a few thousand solids inside a couple of
+ * hundred draw calls. Chunking is what stops that becoming a liability as the
+ * world grows: one merged mesh for the whole map has bounds covering the whole
+ * map, so it is never culled and every triangle in it is submitted every frame,
+ * from every viewport. Splitting the merge per district means the far side of
+ * the city is dropped by the frustum instead of drawn.
  */
 export class Builder {
   constructor() {
     this.buckets = new Map();
     this.materials = new Map();
+    this.chunk = 'world';
+  }
+
+  /** Geometry added from here on belongs to `name` and is merged with its own. */
+  setChunk(name) {
+    this.chunk = name || 'world';
+    return this;
   }
 
   /**
@@ -45,10 +58,10 @@ export class Builder {
     }
     geo.clearGroups();
 
-    const key = `${material.uuid}|${surface}|${collide ? 1 : 0}|${castShadow ? 1 : 0}|${receiveShadow ? 1 : 0}|${renderOrder}`;
+    const key = `${this.chunk}|${material.uuid}|${surface}|${collide ? 1 : 0}|${castShadow ? 1 : 0}|${receiveShadow ? 1 : 0}|${renderOrder}`;
     let bucket = this.buckets.get(key);
     if (!bucket) {
-      bucket = { material, surface, collide, castShadow, receiveShadow, renderOrder, geos: [] };
+      bucket = { chunk: this.chunk, material, surface, collide, castShadow, receiveShadow, renderOrder, geos: [] };
       this.buckets.set(key, bucket);
       this.materials.set(material.uuid, material);
     }
@@ -76,6 +89,7 @@ export class Builder {
       if (merged) {
         for (const g of bucket.geos) g.dispose();
         const mesh = new THREE.Mesh(merged, bucket.material);
+        mesh.name = `${bucket.chunk}:${bucket.material.name || bucket.material.uuid.slice(0, 6)}`;
         this._configure(mesh, bucket);
         group.add(mesh);
         if (bucket.collide && collision) collision.addMesh(mesh);
@@ -94,6 +108,9 @@ export class Builder {
   }
 
   _configure(mesh, bucket) {
+    // Merged geometry keeps whatever bounds mergeGeometries computed; recompute
+    // so culling has a tight sphere to test rather than a stale or missing one.
+    if (mesh.geometry.boundingSphere === null) mesh.geometry.computeBoundingSphere();
     mesh.castShadow = bucket.castShadow;
     mesh.receiveShadow = bucket.receiveShadow;
     mesh.renderOrder = bucket.renderOrder;

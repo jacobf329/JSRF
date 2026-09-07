@@ -48,7 +48,9 @@ export class Game {
 
     this.renderer = new CelRenderer(canvas);
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.Fog(0xc7d4e8, 130, 380);
+    // Fog closes fully at 420, so a far plane just past it costs nothing
+    // visually and lets the frustum drop whole districts on a 600m map.
+    this.scene.fog = new THREE.Fog(0xc7d4e8, 150, 420);
 
     this.sky = new Sky();
     this.scene.add(this.sky.mesh);
@@ -67,7 +69,7 @@ export class Game {
     this.bustedSlot = null;
 
     // Attract-mode camera, also used as the fallback view before a run starts.
-    this.titleCamera = new THREE.PerspectiveCamera(58, 16 / 9, 0.1, 700);
+    this.titleCamera = new THREE.PerspectiveCamera(58, 16 / 9, 0.1, 900);
 
     this._onResize = () => this.resize();
     window.addEventListener('resize', this._onResize);
