@@ -71,4 +71,19 @@ export const SKATER = {
 
   hitStun: 0.9,
   hitKnockback: 12,
+
+  // --- bailing -------------------------------------------------------------
+  // Landing on an unfinished trick is the main way to lose a combo. Without it
+  // there is no reason not to throw the longest trick every time.
+  bailTime: 1.15,
+  bailDrag: 3.2,
+  bailBounce: 3.4,
+  // Aborting a trick early with B pays out what you had completed, so the
+  // decision is commit-or-cash-out rather than a coin flip.
+  trickAbortPayout: 0.6,
+
+  // Time on a single grind stance before you start losing it. Switching stance
+  // or hopping resets it, so a long rail is worked rather than just held.
+  grindStabilityTime: 3.6,
+  grindStabilitySpeedBite: 0.55,
 };

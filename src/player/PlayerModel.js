@@ -204,13 +204,23 @@ export class PlayerModel {
     const airborne = state === PSTATE.AIR;
     const wallriding = state === PSTATE.WALLRIDE;
     const tagging = state === PSTATE.TAG;
-    const hit = state === PSTATE.HIT;
+    const bailing = state === PSTATE.BAIL;
+    const hit = state === PSTATE.HIT || bailing;
 
     // Trick rotations. Roll lives on the yaw group's child so it composes with
     // the spin instead of fighting it.
     this.flipper.rotation.x = player.trickFlip;
     this.flipper.rotation.y = player.trickSpin;
     this.flipper.rotation.z = player.trickRoll || 0;
+
+    // A wipeout tumbles rather than freezing mid-pose.
+    if (bailing) {
+      this._tumble = (this._tumble || 0) + dt * 9;
+      this.flipper.rotation.x = this._tumble;
+      this.flipper.rotation.z = Math.sin(this._tumble * 0.7) * 0.6;
+    } else {
+      this._tumble = 0;
+    }
 
     // Lean into turns, plus a forward crouch that grows with speed.
     const targetRoll = -player.lean * 0.42 + (wallriding ? 0.85 : 0);

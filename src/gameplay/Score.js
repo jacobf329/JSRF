@@ -69,10 +69,17 @@ export class Score {
     }));
     e.on('player:wallride:start', mine(() => this._chain('WALL RIDE')));
     e.on('player:wallride:tick', mine(({ dt }) => this._add(RATES.wallridePerSecond * dt, null, false)));
+    // Starting a trick extends the chain and names it; it does not pay. The
+    // points arrive when the trick actually lands, so a trick you wiped out on
+    // was never banked in the first place.
     e.on('player:trick', mine(({ trick }) => {
       this.tricksDone++;
-      this._chain(trick.name, trick.points);
+      this._chain(trick.name, 0);
     }));
+    e.on('player:trick:complete', mine(({ trick, progress }) => {
+      this._add(trick.points * progress, null, false);
+    }));
+    e.on('player:bail', mine(() => this.loseCombo()));
     e.on('player:land', mine(({ airTime }) => {
       this.airTimeTotal += airTime;
       if (airTime >= RATES.minAirTime) {
@@ -137,9 +144,26 @@ export class Score {
     return gained;
   }
 
+  /** Everything, gone. What a bail costs. */
+  loseCombo() {
+    if (!this.comboActive) {
+      this.events.emit('score:lost', { lost: 0, player: this.player });
+      return 0;
+    }
+    const lost = this.comboPreview;
+    this.combo = 0;
+    this.multiplier = 0;
+    this.comboActive = false;
+    this.comboTimer = 0;
+    this.comboLabel = '';
+    this.comboTricks = [];
+    this.events.emit('score:lost', { lost, player: this.player });
+    return lost;
+  }
+
+  /** Getting hit is softer than bailing: a quarter of the chain survives. */
   breakCombo() {
     if (!this.comboActive) return;
-    // A wipeout still pays out, just at a quarter rate.
     const gained = Math.round(this.combo * Math.max(1, this.multiplier) * 0.25);
     this.total += gained;
     this.combo = 0;

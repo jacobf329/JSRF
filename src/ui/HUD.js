@@ -42,12 +42,20 @@ export class HUD {
           </div>
           <div class="tag-panel">
             <div class="mission">Tags <span class="mission__count" data-tags>0/0</span></div>
+          <div class="mission__goal" data-goal></div>
           </div>
           <div class="tag-panel">
             <div class="stat"><span>Time</span><span class="stat__num" data-time>0:00</span></div>
           </div>
           <div class="heat" data-heat></div>
         </div>
+
+        <div class="risk" data-risk>
+          <div class="risk__label" data-risk-label>LAND IT</div>
+          <div class="risk__bar"><div class="risk__fill" data-risk-fill></div></div>
+        </div>
+
+        <div class="objective" data-objective></div>
 
         <div class="hud__corner hud__corner--bl">
           <div class="hearts" data-hearts></div>
@@ -100,6 +108,11 @@ export class HUD {
     this.$fps = q('[data-fps]');
     this.$trackers = q('[data-trackers]');
     this.$popups = q('[data-popups]');
+    this.$goal = q('[data-goal]');
+    this.$risk = q('[data-risk]');
+    this.$riskLabel = q('[data-risk-label]');
+    this.$riskFill = q('[data-risk-fill]');
+    this.$objective = q('[data-objective]');
 
     this.$name.textContent = `P${slot.index + 1} ${slot.name}`;
     this.$name.style.color = slot.colorHex;
@@ -131,6 +144,7 @@ export class HUD {
     this.scale = 1;
     this.width = 1;
     this.height = 1;
+    this.objectiveTimer = 0;
     this._sprayKey = '';
 
     this._bind();
@@ -233,6 +247,7 @@ export class HUD {
     this.$cans.textContent = String(score.cans);
     this.$cans.classList.toggle('stat__num--low', score.cans < 3);
     this.$tags.textContent = `${graffiti.taggedCount}/${graffiti.totalCount}`;
+    this.$goal.textContent = game.playerCount > 1 ? 'Most points wins' : 'Tag every wall';
     this.$time.textContent = formatTime(mission ? mission.elapsed : 0);
 
     const boostPct = clamp(player.boost / 100, 0, 1);
@@ -250,6 +265,7 @@ export class HUD {
       this.heatPips[i].classList.toggle('is-max', on && heat >= 5);
     }
 
+    this._updateRisk(game);
     this._updateTrackers(game);
     this._updatePrompt(game);
     this._updateSpray(game);
@@ -258,6 +274,10 @@ export class HUD {
     if (this.bannerTimer > 0) {
       this.bannerTimer -= dt;
       if (this.bannerTimer <= 0) this.$banner.classList.remove('is-on');
+    }
+    if (this.objectiveTimer > 0) {
+      this.objectiveTimer -= dt;
+      if (this.objectiveTimer <= 0) this.$objective.classList.remove('is-on');
     }
 
     this.fpsAccum += dt;
@@ -272,6 +292,48 @@ export class HUD {
       }
     }
     this.$fps.style.display = this.showFps ? '' : 'none';
+  }
+
+  /**
+   * The one meter that says whether you are about to lose everything.
+   *
+   * In the air it is trick completion -- you cannot land until it fills. On a
+   * rail it is balance, which drains while you hold a stance. Both are the
+   * same question, so they share the same bar rather than adding two.
+   */
+  _updateRisk(game) {
+    const player = this.slot.player;
+    let label = null;
+    let value = 0;
+    let danger = false;
+
+    if (player.state === 'grind') {
+      label = 'BALANCE';
+      value = clamp(player.grindStability, 0, 1);
+      danger = value < 0.34;
+    } else if (player.trick) {
+      label = 'LAND IT';
+      value = clamp(1 - player.trickTimer / Math.max(0.01, player.trickDuration), 0, 1);
+      danger = value < 1;
+    }
+
+    if (!label) {
+      this.$risk.classList.remove('is-on');
+      return;
+    }
+    this.$risk.classList.add('is-on');
+    this.$risk.classList.toggle('is-danger', danger);
+    this.$riskLabel.textContent = label;
+    this.$riskFill.style.transform = `scaleX(${value})`;
+  }
+
+  /** A card at the start of a run saying what the run is. */
+  showObjective(lines, duration = 5.5) {
+    this.$objective.innerHTML = lines
+      .map((line, i) => `<div class="objective__${i === 0 ? 'title' : 'line'}">${line}</div>`)
+      .join('');
+    this.$objective.classList.add('is-on');
+    this.objectiveTimer = duration;
   }
 
   _updateTrackers(game) {

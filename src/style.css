@@ -667,3 +667,79 @@ html, body {
 }
 .btn.is-focused { background: var(--pink); color: #fff; }
 .picker__btn.is-focused.is-on { background: var(--pink); }
+
+/* ------------------------------------------------------------- risk ------- */
+
+/* The one meter that says you are about to lose the chain: trick completion in
+   the air, balance on a rail. */
+.risk {
+  position: absolute;
+  left: 50%;
+  bottom: 22%;
+  transform: translateX(-50%);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  text-align: center;
+}
+.risk.is-on { opacity: 1; }
+.risk__label {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  color: var(--paper);
+  text-shadow: 2px 2px 0 var(--ink);
+  margin-bottom: 3px;
+}
+.risk__bar {
+  width: 190px;
+  height: 13px;
+  background: var(--ink);
+  border: 3px solid #fff;
+  transform: skewX(-16deg);
+  overflow: hidden;
+  box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.4);
+}
+.risk__fill {
+  height: 100%;
+  width: 100%;
+  background: var(--lime);
+  transform-origin: left center;
+}
+.risk.is-danger .risk__fill { background: var(--pink); }
+.risk.is-danger .risk__label { color: var(--pink); }
+
+.mission__goal {
+  font-size: 14px;
+  letter-spacing: 0.16em;
+  color: var(--cyan);
+  font-weight: 700;
+}
+
+/* ---------------------------------------------------------- objective ----- */
+
+.objective {
+  position: absolute;
+  left: 50%;
+  top: 26%;
+  transform: translateX(-50%) skewX(-8deg);
+  background: rgba(12, 14, 26, 0.9);
+  border: 3px solid var(--yellow);
+  box-shadow: 6px 6px 0 rgba(0, 0, 0, 0.5);
+  padding: 12px 28px 14px;
+  text-align: center;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+.objective.is-on { opacity: 1; }
+.objective__title {
+  font-family: 'Archivo Black', Impact, sans-serif;
+  font-size: 27px;
+  color: var(--yellow);
+  margin-bottom: 4px;
+}
+.objective__line {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--paper);
+  letter-spacing: 0.04em;
+}

@@ -12,6 +12,7 @@ export const PSTATE = {
   WALLRIDE: 'wallride',
   TAG: 'tag',
   HIT: 'hit',
+  BAIL: 'bail',
 };
 
 
@@ -80,6 +81,8 @@ export class Player {
     this.rail = null;
     this.railDist = 0;
     this.railDir = 1;
+    // Drains while you hold one stance; switching stance or hopping resets it.
+    this.grindStability = 1;
     // Hopping off a rail used to drop you straight back onto it: you leave
     // moving along the rail, so you are still directly above it when the
     // cooldown ends. Several rails are closed loops, so that read as "you can
@@ -119,7 +122,9 @@ export class Player {
     this._hasWallContact = false;
   }
 
-  get isLocked() { return this.state === PSTATE.TAG || this.state === PSTATE.HIT; }
+  get isLocked() {
+    return this.state === PSTATE.TAG || this.state === PSTATE.HIT || this.state === PSTATE.BAIL;
+  }
 
   get eyePosition() {
     return _tmp2.copy(this.position).addScaledVector(_up, C.height * 0.85);
@@ -154,6 +159,7 @@ export class Player {
       case PSTATE.WALLRIDE: this._updateWallride(dt, input); break;
       case PSTATE.TAG: this._updateTag(dt); break;
       case PSTATE.HIT: this._updateHit(dt); break;
+      case PSTATE.BAIL: this._updateBail(dt); break;
       default: this._updateFree(dt, input); break;
     }
 
@@ -301,6 +307,9 @@ export class Player {
 
     this.lean = damp(this.lean, input.move.x * 0.6, 5, dt);
 
+    // B cashes the current trick out early rather than risking the landing.
+    if (this.trick && input.pressed('back')) this._abortTrick();
+
     // Two trick buttons in the air: A throws grabs and flips, X throws spins.
     // Spray is only ever used against a wall on the ground, so it is free here.
     if (this.airTime > 0.1 && !this.trick && this.airTricks < C.maxAirTricks) {
@@ -440,13 +449,65 @@ export class Player {
   _land() {
     const airTime = this.airTime;
     const impact = -this.velocity.y;
+    const tricks = this.airTricks;
+
+    // Touching down mid-trick is a wipeout. This is the whole risk in the air:
+    // every trick costs time, so throwing one more is a bet that you have the
+    // height for it, and B cashes out early if you decide you do not.
+    if (this.trick) {
+      this._bail('BLEW THE LANDING');
+      return;
+    }
+
     this.airTime = 0;
     this.airTricks = 0;
+    this.trickSpin = 0;
+    this.trickFlip = 0;
+    this.trickRoll = 0;
+    this.setState(PSTATE.SKATE);
+    this.events.emit('player:land', { player: this, airTime, impact, tricks });
+  }
+
+  /** Wipe out: lose the combo outright and the ability to steer for a moment. */
+  _bail(reason) {
+    if (this.state === PSTATE.BAIL) return;
+    this.trick = null;
+    this.trickPose = null;
+    this.trickPoseWeight = 0;
+    this.rail = null;
+    this.airTime = 0;
+    this.airTricks = 0;
+    this.grindStability = 1;
+    this.velocity.x *= 0.35;
+    this.velocity.z *= 0.35;
+    this.velocity.y = C.bailBounce;
+    this.setState(PSTATE.BAIL);
+    this.events.emit('player:bail', { player: this, reason });
+  }
+
+  _updateBail(dt) {
+    this.velocity.y -= C.gravity * dt;
+    const drag = Math.exp(-C.bailDrag * dt);
+    this.velocity.x *= drag;
+    this.velocity.z *= drag;
+    this._integrate(dt);
+    if (this.stateTime > C.bailTime && (this.grounded || this.stateTime > 3)) {
+      this.setState(this.grounded ? PSTATE.SKATE : PSTATE.AIR);
+    }
+  }
+
+  /** Cash a trick in early: keeps what you completed and saves the landing. */
+  _abortTrick() {
+    if (!this.trick) return;
+    const progress = clamp(1 - this.trickTimer / this.trickDuration, 0, 1);
+    const trick = this.trick;
     this.trick = null;
     this.trickSpin = 0;
     this.trickFlip = 0;
-    this.setState(PSTATE.SKATE);
-    this.events.emit('player:land', { player: this, airTime, impact });
+    this.trickRoll = 0;
+    this.events.emit('player:trick:complete', {
+      player: this, trick, progress: progress * C.trickAbortPayout, aborted: true,
+    });
   }
 
   // ------------------------------------------------------------------ grind
@@ -504,6 +565,7 @@ export class Player {
     this.railSpeed = Math.max(C.grindMinSpeed, Math.max(speed, Math.abs(this.velocity.y) * 0.5));
     this.grindDistance = 0;
     this.grindVariant = 0;
+    this.grindStability = 1;
     this.grindDirection = directionFromInput(input.move.x, input.move.y);
     this.grindTrick = pickGrindTrick(input.move.x, input.move.y, 0);
     this.position.copy(hit.point);
@@ -540,8 +602,19 @@ export class Player {
       const next = pickGrindTrick(input.move.x, input.move.y, this.grindVariant);
       if (next !== this.grindTrick) {
         this.grindTrick = next;
+        this.grindStability = 1;
         this.events.emit('player:grind:stance', { player: this, trick: next });
       }
+    }
+
+    // Holding one stance forever is not a combo, it is a nap. Stability drains
+    // faster the quicker you are going; switching stance is the correction.
+    const bite = 1 + (this.railSpeed / C.grindMaxSpeed) * C.grindStabilitySpeedBite;
+    this.grindStability -= (dt / C.grindStabilityTime) * bite;
+    if (this.grindStability <= 0) {
+      this._exitGrind(false, input);
+      this._bail('LOST THE RAIL');
+      return;
     }
 
     this.railSpeed = clamp(this.railSpeed, 1.2, C.grindMaxSpeed);
@@ -722,6 +795,11 @@ export class Player {
     this.trickPoseWeight = clamp(Math.min(t / 0.16, (1 - t) / 0.24), 0, 1);
 
     if (this.trickTimer <= 0) {
+      // Points land when the trick does, not when it starts -- otherwise a
+      // trick you never finished would already have been paid for.
+      this.events.emit('player:trick:complete', {
+        player: this, trick: this.trick, progress: 1, aborted: false,
+      });
       this.trick = null;
       this.trickSpin = 0;
       this.trickFlip = 0;

@@ -251,6 +251,23 @@ export class Game {
       audio.play('hit');
       slotFor(player).followCamera.addShake(0.9);
     });
+
+    e.on('player:bail', ({ player, reason }) => {
+      audio.play('hit');
+      const slot = slotFor(player);
+      slot.followCamera.addShake(1.1);
+      fx.dust(player.position.clone(), 22);
+      slot.hud.banner(reason, '#ff4d4d', 1.4);
+    });
+    e.on('score:lost', ({ player, lost }) => {
+      if (lost < 200) return;
+      const slot = slotFor(player);
+      slot.hud.popup(player.position.clone().setY(player.position.y + 1.6),
+        `-${Math.round(lost).toLocaleString('en-US')}`, '#ff4d4d');
+    });
+    e.on('player:trick:complete', ({ player, aborted, trick }) => {
+      if (aborted) slotFor(player).hud.banner(`${trick.name} (BAILED OUT)`, '#ffd21e', 0.7);
+    });
     e.on('player:respawn', ({ player }) => slotFor(player).followCamera.reset(player));
 
     e.on('tag:step', () => audio.play('spray'));
@@ -332,7 +349,32 @@ export class Game {
 
   startRun() {
     this.restart();
+    this._brief();
     this.slots[0].hud.banner(`NOW PLAYING: ${this.audio.trackName}`, '#24d6ff', 2.2);
+  }
+
+  /**
+   * Say what the run is, at the start of it.
+   *
+   * The rules were only ever readable from the code, which is no use to anyone
+   * holding a controller.
+   */
+  _brief() {
+    const walls = this.graffiti.totalCount;
+    for (const slot of this.slots) {
+      slot.hud.showObjective(this.playerCount > 1
+        ? [
+          'TAG THE DISTRICT',
+          `${walls} walls, shared between you &mdash; first there takes it`,
+          'Highest score when the last wall goes up wins',
+        ]
+        : [
+          'TAG THE DISTRICT',
+          `Paint all ${walls} walls. Spray cans are scattered around;`,
+          'the good ones are on the rooftops and the expressway.',
+          'Chain tricks for points &mdash; but land them.',
+        ]);
+    }
   }
 
   restart() {

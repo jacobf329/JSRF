@@ -211,7 +211,9 @@ export class Menus {
       ? `RANK: ${rank}`
       : `P${stats.winner.index + 1} ${stats.winner.name} WINS`;
     this.el.querySelector('[data-results-sub]').textContent = stats.complete
-      ? `Shibuya Terminal tagged in ${formatTime(stats.time)}`
+      ? (solo
+        ? `All ${stats.totalTags} walls tagged in ${formatTime(stats.time)}`
+        : `All ${stats.totalTags} walls tagged &mdash; highest score wins`)
       : 'Run ended';
     const banner = this.el.querySelector('[data-results-record]');
     banner.textContent = stats.record ? 'NEW RECORD' : '';
