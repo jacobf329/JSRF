@@ -13,6 +13,8 @@ import { Graffiti } from '../gameplay/Graffiti.js';
 import { Pickups } from '../gameplay/Pickups.js';
 import { Police } from '../gameplay/Police.js';
 import { Mission } from '../gameplay/Mission.js';
+import { Rivals } from '../gameplay/Rivals.js';
+import { GANGS } from '../gameplay/Gangs.js';
 import { Menus } from '../ui/Menus.js';
 import { AudioEngine } from '../audio/Audio.js';
 import { MAX_PLAYERS } from './Constants.js';
@@ -95,6 +97,7 @@ export class Game {
     this.pickups = new Pickups(this.scene, this.level, this.events, this.effects);
     this.police = new Police(this.scene, this.level, this.events, this.effects);
     this.mission = new Mission(this.events, this.graffiti, this.police);
+    this.rivals = new Rivals(this.scene, this.level, this.events, this.effects);
 
     this.dividers = document.createElement('div');
     this.dividers.className = 'dividers';
@@ -198,6 +201,9 @@ export class Game {
 
     this._refreshDevices();
     this.mission.setSlots(this.slots);
+    // Every gang nobody is sitting in gets an AI crew, so a solo run is one
+    // rudie against three and a four-player run is four humans and no AI.
+    this.rivals.setGangs(GANGS.slice(n));
     this.resize();
   }
 
@@ -273,7 +279,28 @@ export class Game {
     e.on('player:respawn', ({ player }) => slotFor(player).followCamera.reset(player));
 
     e.on('tag:step', () => audio.play('spray'));
-    e.on('tag:complete', () => audio.play('tag'));
+    e.on('tag:complete', ({ player, retag, stolenFrom }) => {
+      audio.play('tag');
+      if (retag) slotFor(player).hud.banner(`TOOK IT OFF ${stolenFrom.name}`, stolenFrom.colorHex, 1.3);
+    });
+
+    // A rival taking a wall only interrupts you when it was your wall.
+    e.on('rival:tag', ({ gang, retag, stolenFrom }) => {
+      for (const slot of this.slots) {
+        if (!retag || stolenFrom !== slot.gang) continue;
+        slot.hud.banner(`${gang.name} TOOK ONE OF YOURS`, gang.colorHex, 1.5);
+      }
+    });
+    e.on('rival:knockdown', ({ player, gang }) => {
+      audio.play('hit');
+      const slot = slotFor(player);
+      slot.followCamera.addShake(0.5);
+      slot.hud.banner(`${gang.short} WIPED OUT`, gang.colorHex, 1.1);
+    });
+    e.on('mission:warning', ({ label }) => {
+      for (const slot of this.slots) slot.hud.banner(label, '#ffd21e', 1.8);
+      audio.play('alert');
+    });
     e.on('tag:miss', () => audio.play('hit'));
     e.on('pickup:can', () => audio.play('pickup'));
     e.on('score:bank', ({ gained }) => { if (gained > 400) audio.play('bank'); });
@@ -289,10 +316,13 @@ export class Game {
       }
     });
     e.on('mission:complete', ({ stats }) => {
-      const top = stats.winner ? stats.winner.score : 0;
+      const top = stats.players.length ? Math.max(...stats.players.map((p) => p.score)) : 0;
       stats.record = this.profile.recordScore(this.playerCount, top);
       stats.previousBest = this.profile.bestFor(this.playerCount);
-      this.profile.recordRun({ tags: stats.taggedCount, time: stats.time });
+      // A lifetime tag count should only ever count walls this player painted,
+      // not the ones the rivals filled in around them.
+      const painted = stats.players.reduce((n, p) => n + p.tags, 0);
+      this.profile.recordRun({ tags: painted, time: stats.time });
       this.menus.showResults(stats);
       this.setMode(MODE.RESULTS);
     });
@@ -305,7 +335,12 @@ export class Game {
     const playing = mode === MODE.PLAYING;
     this.input.setEnabled(playing);
     for (const slot of this.slots) slot.hud.setVisible(playing || mode === MODE.PAUSED);
+    // Rivals only exist during a run; nobody should be painting the city
+    // behind the title card.
+    this.rivals.setVisible(playing || mode === MODE.PAUSED);
     this.dividers.style.display = (playing || mode === MODE.PAUSED) && this.playerCount > 1 ? '' : 'none';
+    // The big panel only fits the spare quadrant of a three-player split; every
+    // other count reads the same standings from the crew strip in each HUD.
     this.standings.style.display = (playing || mode === MODE.PAUSED) && this.playerCount === 3 ? '' : 'none';
 
     switch (mode) {
@@ -363,19 +398,18 @@ export class Game {
    */
   _brief() {
     const walls = this.graffiti.totalCount;
+    const rivals = this.rivals.list.map((r) => r.gang.name).join(', ');
+    const minutes = Math.round(this.mission.duration / 60);
     for (const slot of this.slots) {
-      slot.hud.showObjective(this.playerCount > 1
-        ? [
-          'TAG THE DISTRICT',
-          `${walls} walls, shared between you &mdash; first there takes it`,
-          'Highest score when the last wall goes up wins',
-        ]
-        : [
-          'TAG THE DISTRICT',
-          `Paint all ${walls} walls. Spray cans are scattered around;`,
-          'the good ones are on the rooftops and the expressway.',
-          'Chain tricks for points &mdash; but land them.',
-        ]);
+      slot.hud.showObjective([
+        `TURF WAR &mdash; ${slot.gang.name}`,
+        `${walls} walls across five districts. Hold the most when the clock stops.`,
+        rivals
+          ? `You are up against ${rivals}. Paint over their tags to take the wall &mdash;`
+          : 'Paint over the other crews\' tags to take the wall &mdash;',
+        'a takeover costs an extra step and pays nearly double.',
+        `Skate through a rival at speed to put them down. ${minutes} minutes.`,
+      ], 7);
     }
   }
 
@@ -384,6 +418,7 @@ export class Game {
     this.graffiti.reset();
     this.pickups.reset();
     this.police.reset();
+    this.rivals.reset();
     for (const slot of this.slots) slot.reset();
     this.mission.setSlots(this.slots);
     this.mission.start();
@@ -495,6 +530,7 @@ export class Game {
     this.graffiti.update(dt, this);
     this.pickups.update(dt, this);
     this.police.update(dt, this);
+    this.rivals.update(dt, this);
     this.mission.update(dt);
     this._continuousEffects(dt);
     this.effects.update(dt);
@@ -533,18 +569,18 @@ export class Game {
   }
 
   _updateStandings() {
-    const ranked = [...this.slots].sort((a, b) => b.score.total - a.score.total);
+    const rows = this.mission.standings;
     this.standings.innerHTML = `
-      <div class="standings__title">Standings</div>
-      ${ranked.map((s, i) => `
+      <div class="standings__title">Turf</div>
+      ${rows.map((r, i) => `
         <div class="standings__row">
           <span class="standings__pos">${i + 1}</span>
-          <span class="standings__name" style="color:${s.colorHex}">P${s.index + 1} ${s.name}</span>
-          <span class="standings__score">${Math.floor(s.score.total).toLocaleString('en-US')}</span>
-          <span class="standings__tags">${s.tags} tags</span>
+          <span class="standings__name" style="color:${r.colorHex}">${r.human ? `P${r.playerIndex + 1}` : 'CPU'} ${r.short}</span>
+          <span class="standings__score">${r.walls}</span>
+          <span class="standings__tags">${r.human ? `${Math.floor(r.score).toLocaleString('en-US')}` : ''}</span>
         </div>`).join('')}
-      <div class="standings__title">Walls left</div>
-      <div class="standings__big">${this.graffiti.remaining}</div>
+      <div class="standings__title">Unclaimed</div>
+      <div class="standings__big">${this.graffiti.unclaimed}</div>
     `;
   }
 

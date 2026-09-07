@@ -72,16 +72,29 @@ for (const d of DISTRICTS) {
     g.followCamera.reset(p);
   }, d.at);
   await gwait(3.2);   // long enough to fall and settle
-  const info = await page.evaluate(() => {
+  // A quarter-pipe wall or a rail can leave them briefly airborne on the very
+  // frame we look, so watch for a second rather than sampling once: what the
+  // check is really asking is whether anything in the district caught them.
+  const info = await page.evaluate(() => new Promise((resolve) => {
     const g = window.__jsrf;
-    return {
-      grounded: g.player.grounded,
-      y: +g.player.position.y.toFixed(2),
-      state: g.player.state,
-      calls: g.renderer.stats.calls,
-      tris: g.renderer.stats.triangles,
+    let caught = false;
+    const t0 = g.time;
+    const tick = () => {
+      caught = caught || g.player.grounded || g.player.state === 'grind';
+      if (caught || g.time - t0 > 1.2) {
+        resolve({
+          grounded: caught,
+          y: +g.player.position.y.toFixed(2),
+          state: g.player.state,
+          calls: g.renderer.stats.calls,
+          tris: g.renderer.stats.triangles,
+        });
+        return;
+      }
+      requestAnimationFrame(tick);
     };
-  });
+    tick();
+  }));
   rows.push({ id: d.id, ...info });
   await page.screenshot({ path: `scratch/world/${d.id}.png` });
 }
@@ -92,9 +105,7 @@ for (const r of rows) {
   console.log(`${r.id.padEnd(10)} ${String(r.grounded).padEnd(7)} ${String(r.y).padEnd(7)} ${r.state.padEnd(7)} ${String(r.calls).padEnd(6)} ${r.tris.toLocaleString('en-US')}`);
 }
 
-// Dropped from height onto a district full of rails, catching one is a landing
-// too -- what matters is that something caught them.
-const landed = rows.filter((r) => r.grounded || r.state === 'grind').length;
+const landed = rows.filter((r) => r.grounded).length;
 const calls = rows.map((r) => r.calls);
 const ok = {
   allDistrictsCatchYou: landed === DISTRICTS.length,

@@ -12,6 +12,7 @@ const RATES = {
   minAirTime: 0.55,
   landBonus: 120,
   knockdown: 400,
+  rivalKnockdown: 650,
 };
 
 /**
@@ -87,16 +88,19 @@ export class Score {
         this._chain(airTime > 1.8 ? 'BIG AIR' : 'AIR', pts);
       }
     }));
-    e.on('tag:complete', mine(({ points, cans, word }) => {
+    e.on('tag:complete', mine(({ points, cans, word, retag, stolenFrom }) => {
       this.tagsDone++;
       this.cans = Math.max(0, this.cans - cans);
-      this._chain(`TAG: ${word}`, points);
+      this._chain(retag ? `TAKEOVER: ${stolenFrom.short}` : `TAG: ${word}`, points);
     }));
     e.on('pickup:can', mine(({ amount }) => {
       this.cans = Math.min(this.maxCans, this.cans + amount);
       this.events.emit('score:cans', { cans: this.cans, player: this.player });
     }));
     e.on('police:knockdown', mine(() => this._chain('TAKEDOWN', RATES.knockdown)));
+    // Skating through a rival mid-spray is worth more than flooring a cop --
+    // it costs them the wall as well.
+    e.on('rival:knockdown', mine(({ gang }) => this._chain(`${gang.short} WIPED OUT`, RATES.rivalKnockdown)));
     e.on('player:hit', mine(() => this.breakCombo()));
     e.on('player:respawn', mine(() => this.breakCombo()));
   }

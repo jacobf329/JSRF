@@ -17,6 +17,18 @@ const SIZE_RULES = {
   xl: { cans: 3, steps: 7, points: 1600 },
 };
 
+// Unclaimed walls glow in the neutral yellow the markers have always used.
+const NEUTRAL = 0xffd21e;
+
+// Painting over a rival is harder and pays for it: one extra direction in the
+// sequence, and most of the wall's value again on top.
+const RETAG_STEPS = 1;
+const RETAG_BONUS = 0.75;
+
+// A takeover decal sits a hair proud of the piece it is burying, so the old
+// crew's outline still shows around the edges.
+const RETAG_LIFT = 0.025;
+
 const DECAL_VERT = /* glsl */ `
 varying vec2 vUv;
 void main() {
@@ -60,6 +72,10 @@ void main() {
 
 /**
  * Tag spots, the spray minigame and the decals it leaves behind.
+ *
+ * A wall is territory, not a checkbox: every spot is either unclaimed or owned
+ * by a gang, and anybody who is not that gang can paint over it. That is the
+ * whole conflict -- the map is never finished, it just changes hands.
  */
 export class Graffiti {
   constructor(scene, level, events, effects) {
@@ -73,12 +89,17 @@ export class Graffiti {
     this.group.userData.noCollide = true;
     scene.add(this.group);
 
-    this.beaconMaterial = new THREE.ShaderMaterial({
+    // Beacons and markers are tinted by whoever owns the wall, so the caches
+    // are keyed by colour and shared across every spot a crew holds.
+    this._beacons = new Map();
+    this._markers = new Map();
+    this._markerTexture = tagMarkerTexture();
+
+    this.beaconMaterialProto = {
       transparent: true,
       depthWrite: false,
       side: THREE.DoubleSide,
       blending: THREE.AdditiveBlending,
-      uniforms: { uColor: { value: new THREE.Color(0xffd21e) }, uPulse: { value: 0 } },
       vertexShader: `
         varying float vH;
         void main() {
@@ -89,39 +110,65 @@ export class Graffiti {
       fragmentShader: `
         uniform vec3 uColor;
         uniform float uPulse;
+        uniform float uStrength;
         varying float vH;
         void main() {
           float fade = pow(1.0 - vH, 2.2);
           float band = 0.6 + 0.4 * sin(vH * 26.0 - uPulse * 3.4);
-          gl_FragColor = vec4(uColor, fade * band * 0.34);
+          gl_FragColor = vec4(uColor, fade * band * 0.34 * uStrength);
         }
       `,
-    });
-
-    this.markerMaterial = new THREE.MeshBasicMaterial({
-      map: tagMarkerTexture(),
-      transparent: true,
-      depthWrite: false,
-      color: 0xffd21e,
-      toneMapped: false,
-      side: THREE.DoubleSide,
-    });
+    };
 
     this.spots = level.tagSpots.map((data) => this._makeSpot(data));
-    this.taggedCount = 0;
     this.totalCount = this.spots.length;
 
-    // Several players can be painting different walls at once, so sessions and
-    // prompts are keyed by player.
+    // Several players and rivals can be painting different walls at once, so
+    // sessions and prompts are keyed by whoever is holding the can.
     this.sessions = new Map();
     this.prompts = new Map();
     this._pulse = 0;
   }
 
+  // ------------------------------------------------------------ materials
+
+  _beaconMaterial(color, strength) {
+    const key = `${color}:${strength}`;
+    let mat = this._beacons.get(key);
+    if (!mat) {
+      mat = new THREE.ShaderMaterial({
+        ...this.beaconMaterialProto,
+        uniforms: {
+          uColor: { value: new THREE.Color(color) },
+          uPulse: { value: 0 },
+          uStrength: { value: strength },
+        },
+      });
+      this._beacons.set(key, mat);
+    }
+    return mat;
+  }
+
+  _markerMaterial(color) {
+    let mat = this._markers.get(color);
+    if (!mat) {
+      mat = new THREE.MeshBasicMaterial({
+        map: this._markerTexture,
+        transparent: true,
+        depthWrite: false,
+        color,
+        toneMapped: false,
+        side: THREE.DoubleSide,
+      });
+      this._markers.set(color, mat);
+    }
+    return mat;
+  }
+
   _makeSpot(data) {
     const marker = new THREE.Mesh(
       new THREE.PlaneGeometry(Math.min(data.width, data.height) * 0.8, Math.min(data.width, data.height) * 0.8),
-      this.markerMaterial,
+      this._markerMaterial(NEUTRAL),
     );
     marker.position.copy(data.position).addScaledVector(data.normal, MARKER_OFFSET);
     marker.rotation.y = data.dir;
@@ -130,38 +177,83 @@ export class Graffiti {
     this.group.add(marker);
 
     // Vertical light column so spots read from the other side of the district.
-    const beacon = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 46, 6, 1, true), this.beaconMaterial);
+    const beacon = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 46, 6, 1, true), this._beaconMaterial(NEUTRAL, 1));
     beacon.position.set(marker.position.x, data.position.y + 23, marker.position.z);
     beacon.renderOrder = 2;
     beacon.userData.noCollide = true;
     beacon.frustumCulled = true;
     this.group.add(beacon);
 
-    return { data, marker, beacon, tagged: false, decal: null, pulseOffset: Math.random() * 6.28 };
+    const spot = { data, owner: null, marker, beacon, decal: null, pulseOffset: Math.random() * 6.28 };
+    this._dress(spot);
+    return spot;
+  }
+
+  /**
+   * Put a spot's marker and beacon into the state its owner implies.
+   *
+   * An unclaimed wall gets the full yellow column and a spray reticle. A held
+   * wall drops the reticle -- it would sit on top of the art -- and keeps a
+   * short column in the owner's colour, which is how you spot somebody else's
+   * turf from a rooftop and go and take it.
+   */
+  _dress(spot) {
+    const owner = spot.owner;
+    const base = spot.data.position.y;
+    if (!owner) {
+      spot.marker.material = this._markerMaterial(NEUTRAL);
+      spot.marker.visible = true;
+      spot.beacon.material = this._beaconMaterial(NEUTRAL, 1);
+      spot.beacon.scale.y = 1;
+      spot.beacon.position.y = base + 23;
+    } else {
+      spot.marker.visible = false;
+      spot.beacon.material = this._beaconMaterial(owner.color, 0.75);
+      spot.beacon.scale.y = 0.3;
+      spot.beacon.position.y = base + 23 * 0.3;
+    }
+    spot.beacon.visible = true;
   }
 
   // ------------------------------------------------------------------ query
 
-  /** The nearest un-tagged spots, for the HUD's off-screen trackers. */
-  nearestSpots(position, limit = 3) {
+  /** How many walls a crew is holding right now. */
+  ownedBy(gang) {
+    let n = 0;
+    for (const spot of this.spots) if (spot.owner === gang) n++;
+    return n;
+  }
+
+  /** Walls nobody has claimed yet. */
+  get unclaimed() {
+    let n = 0;
+    for (const spot of this.spots) if (!spot.owner) n++;
+    return n;
+  }
+
+  /**
+   * The nearest walls this gang could take, for the HUD's off-screen trackers.
+   * Anything the gang already holds is not a target.
+   */
+  nearestSpots(position, gang, limit = 3) {
     const out = [];
     for (const spot of this.spots) {
-      if (spot.tagged) continue;
+      if (spot.owner && spot.owner === gang) continue;
       out.push({ spot, distance: position.distanceTo(spot.data.position) });
     }
     out.sort((a, b) => a.distance - b.distance);
     return out.slice(0, limit);
   }
 
-  /** Closest un-tagged spot the player is standing in front of. */
-  findNearby(player, maxDistance = 4.4) {
+  /** Closest takeable spot the player is standing in front of. */
+  findNearby(player, gang, maxDistance = 4.4) {
     let best = null;
     let bestDist = maxDistance;
     const px = player.position.x;
     const py = player.position.y + 1.0;
     const pz = player.position.z;
     for (const spot of this.spots) {
-      if (spot.tagged) continue;
+      if (spot.owner && spot.owner === gang) continue;
       const p = spot.data.position;
       const dist = Math.hypot(p.x - px, p.y - py, p.z - pz);
       if (dist >= bestDist) continue;
@@ -181,10 +273,12 @@ export class Graffiti {
   promptFor(player) { return this.prompts.get(player) || null; }
   get anySession() { return this.sessions.size > 0; }
 
-  /** True while another player has already claimed this wall. */
+  /** True while somebody else is already painting this wall. */
+  isClaimed(spot) { return this._claimed(spot); }
+
   _claimed(spot, exclude = null) {
-    for (const [player, session] of this.sessions) {
-      if (player === exclude) continue;
+    for (const [actor, session] of this.sessions) {
+      if (actor === exclude) continue;
       if (session.spot === spot) return true;
     }
     return false;
@@ -192,18 +286,31 @@ export class Graffiti {
 
   // ------------------------------------------------------------- minigame
 
-  begin(spot, player) {
-    if (this.sessions.has(player) || spot.tagged || this._claimed(spot)) return false;
+  /**
+   * Start painting a wall.
+   *
+   * `actor` is whoever is holding the can -- a Player for a human, a rival
+   * skater for the AI. Both drive the same session; the difference is that an
+   * auto session fills itself in on a timer instead of on stick flicks.
+   */
+  begin(spot, actor, gang, { auto = false, rate = 0.4 } = {}) {
+    if (this.sessions.has(actor) || (spot.owner && spot.owner === gang) || this._claimed(spot)) return false;
     const rule = SIZE_RULES[spot.data.size];
+    const retag = !!spot.owner;
+    const steps = rule.steps + (retag ? RETAG_STEPS : 0);
     const sequence = [];
-    for (let i = 0; i < rule.steps; i++) {
+    for (let i = 0; i < steps; i++) {
       let dir;
       do { dir = DIRECTIONS[Math.floor(Math.random() * 4)]; }
       while (i > 0 && dir === sequence[i - 1]);
       sequence.push(dir);
     }
 
-    const { texture, word, palette } = makeTagTexture({ seed: (Math.random() * 1e9) | 0 });
+    const { texture, word, palette } = makeTagTexture({
+      seed: (Math.random() * 1e9) | 0,
+      word: gang ? gang.words[Math.floor(Math.random() * gang.words.length)] : undefined,
+      palette: gang ? gang.palette : undefined,
+    });
     const material = new THREE.ShaderMaterial({
       vertexShader: DECAL_VERT,
       fragmentShader: DECAL_FRAG,
@@ -219,62 +326,77 @@ export class Graffiti {
 
     const geo = new THREE.PlaneGeometry(spot.data.width, spot.data.height);
     const decal = new THREE.Mesh(geo, material);
-    decal.position.copy(spot.data.position).addScaledVector(spot.data.normal, DECAL_OFFSET);
+    const lift = DECAL_OFFSET + (retag ? RETAG_LIFT : 0);
+    decal.position.copy(spot.data.position).addScaledVector(spot.data.normal, lift);
     decal.rotation.y = spot.data.dir;
-    decal.renderOrder = 3;
+    decal.renderOrder = retag ? 4 : 3;
     decal.userData.noCollide = true;
     this.group.add(decal);
 
+    // On a takeover the losing crew's piece stays up until this one is
+    // finished, so a half-sprayed wall reads as contested rather than blank.
+    const previous = retag ? spot.decal : null;
     spot.decal = decal;
     spot.marker.visible = false;
     spot.beacon.visible = false;
 
-    this.sessions.set(player, {
-      player, spot, sequence, index: 0, rule, word, palette,
+    this.sessions.set(actor, {
+      actor, player: actor, gang, spot, sequence, index: 0, rule, word, palette,
+      retag, previous, auto, rate,
       progress: 0, targetProgress: 0,
       timeLeft: 1.55, stepTime: 1.55,
       material, decal, failed: false, flash: 0, stickLatch: null,
     });
-    player.beginTag(spot.data);
-    this.events.emit('tag:begin', { spot, word, sequence, player });
+    if (actor.beginTag) actor.beginTag(spot.data);
+    this.events.emit('tag:begin', { spot, word, sequence, player: actor, gang, retag });
     return true;
   }
 
-  cancel(player, { keepDecal = false } = {}) {
-    const s = this.sessions.get(player);
+  cancel(actor, { keepDecal = false } = {}) {
+    const s = this.sessions.get(actor);
     if (!s) return;
-    this.sessions.delete(player);
+    this.sessions.delete(actor);
     if (!keepDecal) {
-      this.group.remove(s.decal);
-      s.decal.geometry.dispose();
-      s.material.uniforms.uMap.value.dispose();
-      s.material.dispose();
-      s.spot.decal = null;
-      s.spot.marker.visible = true;
-      s.spot.beacon.visible = true;
+      this._disposeDecal(s.decal);
+      // Hand the wall back to whoever held it when the attempt started.
+      s.spot.decal = s.previous;
+      this._dress(s.spot);
     }
-    if (player.state === PSTATE.TAG) player.endTag();
-    this.events.emit('tag:cancel', { spot: s.spot, player });
+    if (actor.state === PSTATE.TAG && actor.endTag) actor.endTag();
+    this.events.emit('tag:cancel', { spot: s.spot, player: actor, gang: s.gang });
   }
 
-  _complete(player) {
-    const s = this.sessions.get(player);
-    if (!s) return;
-    this.sessions.delete(player);
-    const spot = s.spot;
-    spot.tagged = true;
-    spot.marker.visible = false;
-    spot.beacon.visible = false;
-    s.material.uniforms.uProgress.value = 1;
-    this.taggedCount++;
-    player.endTag();
+  _disposeDecal(decal) {
+    if (!decal) return;
+    this.group.remove(decal);
+    decal.geometry.dispose();
+    decal.material.uniforms.uMap.value.dispose();
+    decal.material.dispose();
+  }
 
+  _complete(actor) {
+    const s = this.sessions.get(actor);
+    if (!s) return;
+    this.sessions.delete(actor);
+    const spot = s.spot;
+    const stolenFrom = spot.owner;
+    spot.owner = s.gang;
+    s.material.uniforms.uProgress.value = 1;
+    this._disposeDecal(s.previous);
+    this._dress(spot);
+    if (actor.endTag) actor.endTag();
+
+    const points = Math.round(s.rule.points * (s.retag ? 1 + RETAG_BONUS : 1));
     const pos = spot.data.position.clone().addScaledVector(spot.data.normal, 0.6);
     this.effects.burst(pos, new THREE.Color(s.palette[0]).getHex(), 34, 7);
-    this.events.emit('tag:complete', {
-      spot, word: s.word, points: s.rule.points, player,
+    const payload = {
+      spot, word: s.word, points, player: actor, gang: s.gang,
+      retag: s.retag, stolenFrom,
       cans: s.rule.cans, size: spot.data.size, position: pos,
-    });
+    };
+    // Rivals paint the same walls but must not reach the score, the HUD or the
+    // can economy, all of which are keyed to a seat at the couch.
+    this.events.emit(s.auto ? 'rival:tag' : 'tag:complete', payload);
   }
 
   /** Edge-detected directional input from keys or the left stick. */
@@ -302,15 +424,37 @@ export class Graffiti {
 
     // Idle markers breathe so they read from across the street.
     const s = 0.9 + Math.sin(this._pulse * 2.6) * 0.09;
-    this.markerMaterial.opacity = 0.55 + Math.sin(this._pulse * 2.6) * 0.22;
-    this.beaconMaterial.uniforms.uPulse.value = this._pulse;
+    const alpha = 0.55 + Math.sin(this._pulse * 2.6) * 0.22;
+    for (const mat of this._markers.values()) mat.opacity = alpha;
+    for (const mat of this._beacons.values()) mat.uniforms.uPulse.value = this._pulse;
     for (const spot of this.spots) {
-      if (spot.tagged) continue;
+      if (spot.owner) continue;
       spot.marker.scale.setScalar(s);
     }
 
     for (const slot of game.slots) {
       this._updateSlot(dt, game, slot);
+    }
+    this._updateAuto(dt);
+  }
+
+  /**
+   * Rival sessions fill themselves in.
+   *
+   * They run the same session, decal and completion path a player does, so a
+   * rival's wall is indistinguishable from one you lost fairly -- it just
+   * advances on a clock instead of on stick flicks.
+   */
+  _updateAuto(dt) {
+    for (const session of [...this.sessions.values()]) {
+      if (!session.auto) continue;
+      session.targetProgress = Math.min(1, session.targetProgress + session.rate * dt);
+      session.progress = damp(session.progress, session.targetProgress, 12, dt);
+      session.material.uniforms.uProgress.value = clamp(session.progress, 0, 1);
+      // No tag:step here: that event drives the player's spray UI and the
+      // spray sound, neither of which belongs to a rival across the city.
+      session.index = Math.floor(session.targetProgress * session.sequence.length);
+      if (session.targetProgress >= 1) this._complete(session.actor);
     }
   }
 
@@ -324,13 +468,16 @@ export class Graffiti {
     }
 
     // Not tagging: surface a prompt when the player is in front of a wall.
-    const near = this.findNearby(player);
+    const near = this.findNearby(player, slot.gang);
     if (near && !player.isLocked) {
       const cans = this.cansFor(near);
-      const prompt = { spot: near, cans, enough: score ? score.cans >= cans : true };
+      const prompt = {
+        spot: near, cans, retag: !!near.owner, stolenFrom: near.owner,
+        enough: score ? score.cans >= cans : true,
+      };
       this.prompts.set(player, prompt);
       if (input.pressed('spray') && prompt.enough && player.grounded) {
-        this.begin(near, player);
+        this.begin(near, player, slot.gang);
       }
     } else {
       this.prompts.delete(player);
@@ -376,25 +523,22 @@ export class Graffiti {
     }
   }
 
-  /** Strip every decal and put the markers back. */
+  /** Strip every decal and hand the whole map back to nobody. */
   reset() {
-    for (const session of this.sessions.values()) this.group.remove(session.decal);
+    for (const session of this.sessions.values()) {
+      this.group.remove(session.decal);
+      if (session.previous === session.spot.decal) session.spot.decal = session.previous;
+    }
     this.sessions.clear();
     this.prompts.clear();
     for (const spot of this.spots) {
-      if (spot.decal) {
-        this.group.remove(spot.decal);
-        spot.decal.geometry.dispose();
-        spot.decal.material.uniforms.uMap.value.dispose();
-        spot.decal.material.dispose();
-        spot.decal = null;
-      }
-      spot.tagged = false;
-      spot.marker.visible = true;
-      spot.beacon.visible = true;
+      this._disposeDecal(spot.decal);
+      spot.decal = null;
+      spot.owner = null;
+      this._dress(spot);
     }
-    this.taggedCount = 0;
   }
 
-  get remaining() { return this.totalCount - this.taggedCount; }
+  /** Walls still up for grabs -- the old "how many left to paint" number. */
+  get remaining() { return this.unclaimed; }
 }

@@ -40,6 +40,7 @@ export class Level {
     this.tagSpots = [];
     this.canSpots = [];
     this.policePosts = [];
+    this.bounds = LEVEL.bounds;
     this.spawn = new THREE.Vector3(LEVEL.spawn.x, LEVEL.spawn.y, LEVEL.spawn.z);
     this.spawnHeading = LEVEL.spawn.heading;
     this.name = LEVEL.name;

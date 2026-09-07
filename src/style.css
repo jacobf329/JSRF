@@ -341,7 +341,9 @@ html, body {
   display: none;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  /* Plain `center` clips both ends of content taller than the box and puts
+     them out of scroll reach; `safe` falls back to start once it overflows. */
+  justify-content: safe center;
   gap: clamp(8px, 1.6vh, 18px);
   padding: 3vh 4vw;
   background: rgba(8, 10, 20, 0.82);
@@ -396,8 +398,8 @@ html, body {
 .results {
   display: grid;
   grid-template-columns: auto auto;
-  gap: 6px 30px;
-  font-size: 22px;
+  gap: clamp(2px, 0.7vh, 6px) 30px;
+  font-size: clamp(16px, 2.6vh, 22px);
   color: var(--paper);
 }
 .results b { color: var(--yellow); font-family: 'Archivo Black', Impact, sans-serif; }
@@ -430,6 +432,34 @@ html, body {
   font-variant-numeric: tabular-nums;
 }
 
+.scoreboard--crews { margin-bottom: 18px; }
+.scoreboard__cpu { opacity: 0.7; }
+
+/* live turf standings, one row per crew */
+.crews {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.crews__row {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  gap: 7px;
+  align-items: center;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  opacity: 0.72;
+}
+.crews__row--me { opacity: 1; }
+.crews__row--me .crews__walls { color: var(--yellow); }
+.crews__dot {
+  width: 10px;
+  height: 10px;
+  box-shadow: 0 0 0 1px rgba(20, 22, 38, 0.9);
+}
+.crews__walls { font-family: 'Archivo Black', Impact, sans-serif; }
+
 /* off-screen tag-spot trackers */
 .tracker {
   position: absolute;
@@ -439,12 +469,15 @@ html, body {
   display: grid;
   place-items: center;
   will-change: transform, opacity;
+  /* Arrow colour comes from currentColor so an inline crew colour, set when
+     the wall already belongs to somebody, beats the proximity cues below. */
+  color: var(--yellow);
 }
 .tracker__arrow {
   width: 0; height: 0;
   border-left: 13px solid transparent;
   border-right: 13px solid transparent;
-  border-bottom: 20px solid var(--yellow);
+  border-bottom: 20px solid currentColor;
   filter: drop-shadow(2px 2px 0 rgba(20, 22, 38, 0.9));
 }
 .tracker__dist {
@@ -455,11 +488,9 @@ html, body {
   color: var(--paper);
   text-shadow: 2px 2px 0 var(--ink);
 }
-.tracker--near .tracker__arrow { border-bottom-color: var(--lime); }
-.tracker--onscreen .tracker__arrow {
-  border-bottom-color: var(--pink);
-  transform: none !important;
-}
+.tracker--near { color: var(--lime); }
+.tracker--onscreen { color: var(--pink); }
+.tracker--onscreen .tracker__arrow { transform: none !important; }
 
 /* ------------------------------------------------------- split screen ---- */
 
@@ -572,13 +603,13 @@ html, body {
 
 .scoreboard {
   border-collapse: collapse;
-  font-size: 20px;
+  font-size: clamp(15px, 2.4vh, 20px);
   color: var(--paper);
   background: rgba(20, 22, 38, 0.7);
   border: 3px solid rgba(255, 255, 255, 0.3);
 }
 .scoreboard th,
-.scoreboard td { padding: 6px 16px; text-align: right; }
+.scoreboard td { padding: clamp(2px, 0.6vh, 6px) 16px; text-align: right; }
 .scoreboard th {
   font-size: 14px;
   letter-spacing: 0.2em;

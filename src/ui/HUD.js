@@ -41,8 +41,11 @@ export class HUD {
             <div class="stat"><span>Cans</span><span class="stat__num" data-cans>15</span></div>
           </div>
           <div class="tag-panel">
-            <div class="mission">Tags <span class="mission__count" data-tags>0/0</span></div>
+            <div class="mission">Walls <span class="mission__count" data-tags>0/0</span></div>
           <div class="mission__goal" data-goal></div>
+          </div>
+          <div class="tag-panel">
+            <div class="crews" data-crews></div>
           </div>
           <div class="tag-panel">
             <div class="stat"><span>Time</span><span class="stat__num" data-time>0:00</span></div>
@@ -95,6 +98,7 @@ export class HUD {
     this.$comboFill = q('[data-combo-fill]');
     this.$cans = q('[data-cans]');
     this.$tags = q('[data-tags]');
+    this.$crews = q('[data-crews]');
     this.$time = q('[data-time]');
     this.$heat = q('[data-heat]');
     this.$hearts = q('[data-hearts]');
@@ -246,9 +250,11 @@ export class HUD {
 
     this.$cans.textContent = String(score.cans);
     this.$cans.classList.toggle('stat__num--low', score.cans < 3);
-    this.$tags.textContent = `${graffiti.taggedCount}/${graffiti.totalCount}`;
-    this.$goal.textContent = game.playerCount > 1 ? 'Most points wins' : 'Tag every wall';
-    this.$time.textContent = formatTime(mission ? mission.elapsed : 0);
+    // Your crew's walls out of the whole map -- the turf war's only number.
+    this.$tags.textContent = `${graffiti.ownedBy(this.slot.gang)}/${graffiti.totalCount}`;
+    this.$goal.textContent = 'Most walls wins';
+    this.$time.textContent = formatTime(mission ? mission.timeLeft : 0);
+    this.$time.classList.toggle('stat__num--low', !!mission && mission.timeLeft < 30);
 
     const boostPct = clamp(player.boost / 100, 0, 1);
     this.$boost.style.transform = `scaleX(${boostPct})`;
@@ -265,6 +271,7 @@ export class HUD {
       this.heatPips[i].classList.toggle('is-max', on && heat >= 5);
     }
 
+    this._updateCrews(game);
     this._updateRisk(game);
     this._updateTrackers(game);
     this._updatePrompt(game);
@@ -301,6 +308,25 @@ export class HUD {
    * rail it is balance, which drains while you hold a stance. Both are the
    * same question, so they share the same bar rather than adding two.
    */
+  /**
+   * The live turf standings, four rows of one line each.
+   *
+   * Rebuilt only when the numbers actually move -- this runs every frame in
+   * every pane, and four players means four of these.
+   */
+  _updateCrews(game) {
+    const rows = game.mission.standings;
+    const key = rows.map((r) => `${r.short}${r.walls}`).join('|');
+    if (key === this._crewKey) return;
+    this._crewKey = key;
+    this.$crews.innerHTML = rows.map((r) => `
+      <div class="crews__row${r.gang === this.slot.gang ? ' crews__row--me' : ''}">
+        <span class="crews__dot" style="background:${r.colorHex}"></span>
+        <span class="crews__name">${r.short}</span>
+        <span class="crews__walls">${r.walls}</span>
+      </div>`).join('');
+  }
+
   _updateRisk(game) {
     const player = this.slot.player;
     let label = null;
@@ -340,7 +366,7 @@ export class HUD {
     const slot = this.slot;
     const targets = game.graffiti.sessionFor(slot.player)
       ? []
-      : game.graffiti.nearestSpots(slot.player.position, this.scale < 0.9 ? 2 : 3);
+      : game.graffiti.nearestSpots(slot.player.position, slot.gang, this.scale < 0.9 ? 2 : 3);
 
     while (this.trackers.length < targets.length) {
       const el = document.createElement('div');
@@ -386,6 +412,9 @@ export class HUD {
 
       t.el.classList.toggle('tracker--onscreen', onScreen);
       t.el.classList.toggle('tracker--near', distance < 22);
+      // A tracker wears the colour of whoever holds the wall, so a screenful
+      // of arrows tells you at a glance which crew is running away with it.
+      t.el.style.color = spot.owner ? spot.owner.colorHex : '';
       t.el.style.left = `${x}px`;
       t.el.style.top = `${y}px`;
       t.el.style.opacity = String(i === 0 ? 1 : 0.55);
@@ -403,9 +432,13 @@ export class HUD {
     this.$prompt.classList.add('is-on');
     this.$prompt.classList.toggle('is-blocked', !p.enough);
     const key = this.slot.input.id.startsWith('pad') ? 'X' : this.slot.input.id === 'kb2' ? '.' : 'E';
+    const cans = `${p.cans} can${p.cans > 1 ? 's' : ''}`;
+    const verb = p.retag
+      ? `Paint over ${p.stolenFrom.name}`
+      : 'Tag this spot';
     this.$prompt.innerHTML = p.enough
-      ? `<kbd>${key}</kbd> Tag this spot &mdash; ${p.cans} can${p.cans > 1 ? 's' : ''}`
-      : `Need ${p.cans} can${p.cans > 1 ? 's' : ''} &mdash; find more paint`;
+      ? `<kbd>${key}</kbd> ${verb} &mdash; ${cans}`
+      : `Need ${cans} &mdash; find more paint`;
   }
 
   _updateSpray(game) {

@@ -60,8 +60,8 @@ export class Menus {
       </div>
 
       <div class="screen clickable" data-screen="results">
-        <div class="screen__sub" data-results-sub>District tagged</div>
         <h1 class="screen__title" data-results-rank>RANK: JET</h1>
+        <div class="screen__sub" data-results-sub>District tagged</div>
         <div class="results__record" data-results-record style="display:none">NEW RECORD</div>
         <div data-results-body></div>
         <div class="btn-row">
@@ -207,41 +207,58 @@ export class Menus {
   showResults(stats) {
     const solo = stats.players.length === 1;
     const rank = rankFor(stats, stats.players[0]);
-    this.el.querySelector('[data-results-rank]').textContent = solo
-      ? `RANK: ${rank}`
-      : `P${stats.winner.index + 1} ${stats.winner.name} WINS`;
-    this.el.querySelector('[data-results-sub]').textContent = stats.complete
-      ? (solo
-        ? `All ${stats.totalTags} walls tagged in ${formatTime(stats.time)}`
-        : `All ${stats.totalTags} walls tagged &mdash; highest score wins`)
-      : 'Run ended';
+    const winner = stats.winner;
+    const you = stats.players[0];
+    // A turf war is won on walls, so the headline is the crew that held the
+    // most -- which in a solo run may well not be yours.
+    this.el.querySelector('[data-results-rank]').textContent = winner
+      ? `${winner.name} TAKES THE CITY`
+      : 'NOBODY TAKES THE CITY';
+    this.el.querySelector('[data-results-sub]').textContent = solo
+      ? `You held ${you.walls} of ${stats.totalTags} walls in ${formatTime(stats.time)} \u2014 rank ${rank}`
+      : `${stats.totalTags} walls, ${stats.unclaimed} still unclaimed after ${formatTime(stats.time)}`;
     const banner = this.el.querySelector('[data-results-record]');
     banner.textContent = stats.record ? 'NEW RECORD' : '';
     banner.style.display = stats.record ? '' : 'none';
 
+    const crews = `<table class="scoreboard scoreboard--crews">
+        <thead><tr><th></th><th>Crew</th><th>Walls</th><th>Score</th></tr></thead>
+        <tbody>
+          ${stats.standings.map((r, i) => `
+            <tr${r.human ? '' : ' class="scoreboard__cpu"'}>
+              <td class="scoreboard__pos">${i + 1}</td>
+              <td style="color:${r.colorHex}"><b>${r.name}</b>${r.human ? ` &mdash; P${r.playerIndex + 1} ${r.rudie}` : ' &mdash; CPU'}</td>
+              <td>${r.walls}</td>
+              <td>${r.human ? formatScore(r.score) : '&mdash;'}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>`;
+
     const body = solo
-      ? `<div class="results">
-          <span>Score</span><b>${formatScore(stats.players[0].score)}</b>
-          <span>Tags</span><b>${stats.players[0].tags}/${stats.totalTags}</b>
+      ? crews + `<div class="results">
+          <span>Walls held</span><b>${you.walls}/${stats.totalTags}</b>
+          <span>Walls painted</span><b>${you.tags}</b>
+          <span>Taken off rivals</span><b>${you.steals}</b>
+          <span>Score</span><b>${formatScore(you.score)}</b>
           <span>Time</span><b>${formatTime(stats.time)}</b>
-          <span>Best combo</span><b>${formatScore(stats.players[0].bestCombo)}</b>
-          <span>Tricks landed</span><b>${stats.players[0].tricks}</b>
-          <span>Grind distance</span><b>${Math.round(stats.players[0].grindMetres)} m</b>
-          <span>Air time</span><b>${stats.players[0].airTime.toFixed(1)} s</b>
-          <span>Takedowns</span><b>${stats.players[0].takedowns}</b>
+          <span>Best combo</span><b>${formatScore(you.bestCombo)}</b>
+          <span>Tricks landed</span><b>${you.tricks}</b>
+          <span>Grind distance</span><b>${Math.round(you.grindMetres)} m</b>
+          <span>Air time</span><b>${you.airTime.toFixed(1)} s</b>
+          <span>Takedowns</span><b>${you.takedowns}</b>
         </div>`
-      : `<table class="scoreboard">
-          <thead><tr><th></th><th>Rudie</th><th>Score</th><th>Tags</th><th>Best combo</th><th>Tricks</th><th>Grind</th><th>Busts</th></tr></thead>
+      : crews + `<table class="scoreboard">
+          <thead><tr><th></th><th>Rudie</th><th>Walls</th><th>Score</th><th>Stolen</th><th>Best combo</th><th>Tricks</th><th>Busts</th></tr></thead>
           <tbody>
             ${stats.players.map((p, i) => `
               <tr>
                 <td class="scoreboard__pos">${i + 1}</td>
                 <td style="color:${p.colorHex}"><b>P${p.index + 1} ${p.name}</b></td>
+                <td>${p.walls}</td>
                 <td>${formatScore(p.score)}</td>
-                <td>${p.tags}</td>
+                <td>${p.steals}</td>
                 <td>${formatScore(p.bestCombo)}</td>
                 <td>${p.tricks}</td>
-                <td>${Math.round(p.grindMetres)} m</td>
                 <td>${p.busts}</td>
               </tr>`).join('')}
           </tbody>

@@ -41,7 +41,7 @@ function star(ctx, cx, cy, spikes, outer, inner) {
  * Draws a piece of wildstyle-ish graffiti onto a canvas and returns it as a
  * texture. Everything is procedural, so no two tags in a run look alike.
  */
-export function makeTagCanvas({ word, seed = Date.now(), width = 640, height = 448 } = {}) {
+export function makeTagCanvas({ word, seed = Date.now(), width = 640, height = 448, palette: forced } = {}) {
   const rng = makeRng(seed || 1);
   const canvas = document.createElement('canvas');
   canvas.width = width;
@@ -49,7 +49,9 @@ export function makeTagCanvas({ word, seed = Date.now(), width = 640, height = 4
   const ctx = canvas.getContext('2d');
 
   const text = (word || WORDS[Math.floor(rng() * WORDS.length)]).toUpperCase();
-  const palette = PALETTES[Math.floor(rng() * PALETTES.length)];
+  // A crew paints in its own colours, so a wall reads as theirs from across
+  // the street. Only unaffiliated art falls back to the random set.
+  const palette = forced || PALETTES[Math.floor(rng() * PALETTES.length)];
   const [main, accent, ink] = palette;
 
   ctx.clearRect(0, 0, width, height);
