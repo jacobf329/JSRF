@@ -4,16 +4,13 @@ import { PALETTE } from '../render/Palette.js';
 import { PSTATE } from './Player.js';
 import { POSES } from './Poses.js';
 import { clamp, damp } from '../core/MathUtils.js';
+import { RUDIES } from './Rudies.js';
 
 const SHOE = 0xf4f6ff;
 
-/** One look per player slot, so everybody is readable at split-screen size. */
-export const RUDIE_SKINS = [
-  { name: 'BEAT', jacket: 0x18d7c8, jacketDark: 0x0f9a90, beanie: 0xff2f87, pack: 0xff7a1a, pants: 0x2b3150, skin: PALETTE.skin, wheel: 0x24d6ff },
-  { name: 'GUM', jacket: 0xa8ff3e, jacketDark: 0x6fb320, beanie: 0x9a5cff, pack: 0x24d6ff, pants: 0x21243a, skin: 0xf2b98a, wheel: 0xa8ff3e },
-  { name: 'YOYO', jacket: 0xff7a1a, jacketDark: 0xc4530a, beanie: 0x24d6ff, pack: 0xffd21e, pants: 0x33263f, skin: 0xc98a5e, wheel: 0xff7a1a },
-  { name: 'COMBO', jacket: 0xff2f87, jacketDark: 0xc00f5c, beanie: 0xffd21e, pack: 0xa8ff3e, pants: 0x1d2b5c, skin: 0x8a5a3c, wheel: 0xff2f87 },
-];
+// Kept as an export because the rig and the asset pipeline both index looks by
+// number; the roster itself, stats and all, lives in Rudies.js.
+export const RUDIE_SKINS = RUDIES;
 
 function box(w, h, d, color, opts = {}) {
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), toon(color, opts.mat));

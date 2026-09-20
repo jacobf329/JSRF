@@ -120,7 +120,12 @@ export class Graffiti {
       `,
     };
 
-    this.spots = level.tagSpots.map((data) => this._makeSpot(data));
+    this.all = level.tagSpots.map((data) => this._makeSpot(data));
+    // `spots` is whatever is in play right now. A city-wide run is every wall;
+    // a mission in one district is that district's, with the rest dark so the
+    // map does not advertise walls the run will not count.
+    this.spots = this.all;
+    this.district = null;
     this.totalCount = this.spots.length;
 
     // Several players and rivals can be painting different walls at once, so
@@ -128,6 +133,23 @@ export class Graffiti {
     this.sessions = new Map();
     this.prompts = new Map();
     this._pulse = 0;
+  }
+
+  /**
+   * Narrow the run to one district, or pass null for the whole city.
+   *
+   * Walls outside the district keep whatever they were painted -- they are
+   * simply not in play, so they are unlit, unprompted and uncounted.
+   */
+  setDistrict(id) {
+    this.district = id || null;
+    this.spots = id ? this.all.filter((s) => s.data.district === id) : this.all;
+    this.totalCount = this.spots.length;
+    for (const spot of this.all) {
+      const inPlay = !id || spot.data.district === id;
+      spot.marker.visible = inPlay && !spot.owner;
+      spot.beacon.visible = inPlay;
+    }
   }
 
   // ------------------------------------------------------------ materials
@@ -200,9 +222,10 @@ export class Graffiti {
   _dress(spot) {
     const owner = spot.owner;
     const base = spot.data.position.y;
+    const inPlay = !this.district || spot.data.district === this.district;
     if (!owner) {
       spot.marker.material = this._markerMaterial(NEUTRAL);
-      spot.marker.visible = true;
+      spot.marker.visible = inPlay;
       spot.beacon.material = this._beaconMaterial(NEUTRAL, 1);
       spot.beacon.scale.y = 1;
       spot.beacon.position.y = base + 23;
@@ -212,7 +235,7 @@ export class Graffiti {
       spot.beacon.scale.y = 0.3;
       spot.beacon.position.y = base + 23 * 0.3;
     }
-    spot.beacon.visible = true;
+    spot.beacon.visible = inPlay;
   }
 
   // ------------------------------------------------------------------ query
@@ -531,7 +554,7 @@ export class Graffiti {
     }
     this.sessions.clear();
     this.prompts.clear();
-    for (const spot of this.spots) {
+    for (const spot of this.all) {
       this._disposeDecal(spot.decal);
       spot.decal = null;
       spot.owner = null;

@@ -435,6 +435,135 @@ html, body {
 .scoreboard--crews { margin-bottom: 18px; }
 .scoreboard__cpu { opacity: 0.7; }
 
+/* mission select */
+.chapters {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(760px, 92vw);
+  max-height: 46vh;
+  overflow-y: auto;
+  text-align: left;
+}
+.chapter { border-left: 4px solid var(--cyan); padding-left: 12px; }
+.chapter.is-locked { border-left-color: rgba(255, 255, 255, 0.2); opacity: 0.55; }
+.chapter__name {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  color: var(--cyan);
+  text-transform: uppercase;
+  margin-bottom: 3px;
+}
+.chapter.is-locked .chapter__name { color: rgba(255, 255, 255, 0.5); }
+.mission-row {
+  display: grid;
+  /* Fixed columns so the type and the medal line up down the whole list
+     rather than sliding about with the length of each name. */
+  grid-template-columns: 1fr 90px 100px;
+  gap: 12px;
+  align-items: baseline;
+  width: 100%;
+  padding: 5px 12px;
+  border: 2px solid transparent;
+  background: rgba(20, 22, 38, 0.6);
+  color: var(--paper);
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 19px;
+  font-weight: 700;
+  text-transform: uppercase;
+  text-align: left;
+  cursor: pointer;
+}
+.mission-row + .mission-row { margin-top: 3px; }
+.mission-row.is-focused { border-color: var(--yellow); background: rgba(255, 210, 30, 0.16); }
+.mission-row.is-locked { opacity: 0.45; cursor: default; }
+.mission-row__type { font-size: 13px; letter-spacing: 0.16em; color: var(--cyan); text-align: right; }
+.mission-row__lock { font-size: 13px; letter-spacing: 0.16em; color: rgba(255, 255, 255, 0.5); text-align: right; }
+.mission-row__medal { font-size: 13px; letter-spacing: 0.14em; color: var(--paper); text-align: right; }
+.mission-row__medal.is-gold { color: #ffd21e; }
+.mission-row__medal.is-silver { color: #d6dbe8; }
+.mission-row__medal.is-bronze { color: #e08a4a; }
+
+/* roster picker */
+.roster { width: min(760px, 92vw); text-align: left; }
+.roster__label {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 14px;
+  letter-spacing: 0.28em;
+  font-weight: 700;
+  color: var(--cyan);
+  text-transform: uppercase;
+}
+.roster__row { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0; }
+.roster__pick {
+  display: grid;
+  gap: 1px;
+  padding: 5px 14px;
+  border: 2px solid var(--crew, rgba(255, 255, 255, 0.3));
+  background: rgba(20, 22, 38, 0.7);
+  color: var(--paper);
+  font-family: 'Barlow Condensed', sans-serif;
+  font-weight: 700;
+  text-transform: uppercase;
+  cursor: pointer;
+  line-height: 1.1;
+}
+.roster__pick b { font-size: 17px; color: var(--crew, var(--paper)); }
+.roster__pick span { font-size: 12px; letter-spacing: 0.14em; opacity: 0.8; }
+.roster__pick.is-on { background: var(--crew); color: var(--ink); }
+.roster__pick.is-on b { color: var(--ink); }
+.roster__pick.is-focused { outline: 3px solid var(--yellow); outline-offset: 2px; }
+.roster__pick.is-locked { opacity: 0.4; cursor: default; border-color: rgba(255, 255, 255, 0.2); }
+.roster__blurb {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 15px;
+  color: var(--paper);
+  opacity: 0.8;
+  min-height: 1.2em;
+}
+
+/* medal ladder on the results screen */
+.medals {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 14px;
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: clamp(15px, 2.2vh, 18px);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.medals__row {
+  display: grid;
+  grid-template-columns: 130px auto;
+  gap: 16px;
+  padding: 2px 10px;
+  opacity: 0.55;
+}
+.medals__row.is-on { opacity: 1; background: rgba(255, 210, 30, 0.16); }
+.medals__name.is-gold { color: #ffd21e; }
+.medals__name.is-silver { color: #d6dbe8; }
+.medals__name.is-bronze { color: #e08a4a; }
+.medals__need { color: var(--paper); }
+
+/* the run's goal, under the wall count */
+.mission__bar {
+  height: 4px;
+  margin-top: 3px;
+  background: rgba(255, 255, 255, 0.18);
+  overflow: hidden;
+}
+.mission__fill {
+  height: 100%;
+  background: var(--cyan);
+  transform-origin: left;
+  transform: scaleX(0);
+  transition: transform 0.18s linear;
+}
+.mission__fill--done { background: var(--lime); }
+
 /* live turf standings, one row per crew */
 .crews {
   display: flex;

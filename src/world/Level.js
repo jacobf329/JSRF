@@ -1025,6 +1025,46 @@ export class Level {
     for (const [x, y, z] of POLICE_POSTS) this.policePosts.push(new THREE.Vector3(x, y, z));
   }
 
+  /**
+   * Somewhere in a district it is safe to put a skater down.
+   *
+   * Spirals out from the district centre looking for open ground rather than
+   * trusting a hand-placed coordinate, because the buildings move whenever the
+   * map is edited and a spawn inside a wall is a run nobody can start. Results
+   * are cached: the answer only changes when the level is rebuilt.
+   */
+  districtSpawn(id) {
+    if (!this._spawns) this._spawns = new Map();
+    const cached = this._spawns.get(id);
+    if (cached) return cached.clone();
+
+    const district = DISTRICTS[id] || DISTRICTS.terminal;
+    const [cx, cz] = district.centre;
+    const down = new THREE.Vector3(0, -1, 0);
+    const from = new THREE.Vector3();
+    const probe = new THREE.Vector3();
+    let best = null;
+
+    // Golden-angle spiral: even coverage without favouring any one direction.
+    for (let i = 0; i < 260 && !best; i++) {
+      const r = i === 0 ? 0 : Math.sqrt(i / 260) * 110;
+      const a = i * 2.39996;
+      const x = cx + Math.cos(a) * r;
+      const z = cz + Math.sin(a) * r;
+      from.set(x, 140, z);
+      const hit = this.collision.raycast(from, down, 190);
+      if (!hit || hit.normal.y < 0.86) continue;          // sheer, or nothing there
+      probe.set(x, hit.point.y + 0.05, z);
+      // A rooftop is ground too, but a spawn wedged against a wall is not.
+      if (this.collision.resolveCapsule(probe, 0.55, 2.2, 2).length) continue;
+      best = new THREE.Vector3(x, hit.point.y + 0.4, z);
+    }
+
+    if (!best) best = new THREE.Vector3(cx, 4, cz);
+    this._spawns.set(id, best);
+    return best.clone();
+  }
+
   // ------------------------------------------------------------------ lights
 
   _lights() {

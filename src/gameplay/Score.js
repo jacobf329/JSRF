@@ -77,8 +77,10 @@ export class Score {
       this.tricksDone++;
       this._chain(trick.name, 0);
     }));
-    e.on('player:trick:complete', mine(({ trick, progress }) => {
-      this._add(trick.points * progress, null, false);
+    e.on('player:trick:complete', mine(({ trick, progress, player }) => {
+      // Technique is paid here: the same trick is worth more in better hands.
+      const skill = player && player.traits ? player.traits.trickPoints : 1;
+      this._add(trick.points * progress * skill, null, false);
     }));
     e.on('player:bail', mine(() => this.loseCombo()));
     e.on('player:land', mine(({ airTime }) => {

@@ -246,7 +246,9 @@ class Cop {
     }
 
     // The player can bowl cops over at speed.
-    if (this.state !== STATE.STUN && dist < 1.5 && player.speed > COP.knockdownSpeed) {
+    // Power decides how hard you have to be going to bowl one over.
+    const check = player.traits ? player.traits.checkSpeed : 1;
+    if (this.state !== STATE.STUN && dist < 1.5 && player.speed > COP.knockdownSpeed * check) {
       this.knockdown(player.velocity);
       effects.burst(this.position.clone().setY(this.position.y + 1), PALETTE.policeAccent, 22, 6);
       events.emit('police:knockdown', { cop: this, player });
@@ -373,6 +375,9 @@ export class Police {
     this.maxHeat = 5;
     this.spawnTimer = 2.5;
     this.enabled = true;
+    // How hard the Rokkaku response is on this run. A tutorial wants nobody on
+    // the street; a late mission wants the whole squad.
+    this.intensity = 1;
 
     this._target = new THREE.Vector3();
     events.on('tag:complete', () => { this.heat = Math.min(this.maxHeat, this.heat + 1); });
@@ -381,6 +386,13 @@ export class Police {
 
   get activeCops() { return this.pool.filter((c) => c.active); }
   get chasing() { return this.pool.some((c) => c.active && (c.state === STATE.CHASE || c.state === STATE.ATTACK)); }
+
+  /** 0 turns the police off entirely; 1 is the standard response. */
+  setIntensity(intensity) {
+    this.intensity = Math.max(0, intensity);
+    this.enabled = this.intensity > 0;
+    if (!this.enabled) this.reset();
+  }
 
   reset() {
     for (const cop of this.pool) cop.despawn();
@@ -397,8 +409,12 @@ export class Police {
     const allHigh = slots.every((s) => s.player.position.y > 8);
     this.heat = Math.max(0, this.heat - dt * (allHigh ? 0.16 : 0.05));
 
-    // More rudies on the street means more of a response.
-    const wanted = Math.min(this.maxCops, Math.floor(this.heat) + (slots.length - 1));
+    // More rudies on the street means more of a response, scaled by how hard
+    // this run's Rokkaku presence is meant to be.
+    const wanted = Math.min(
+      this.maxCops,
+      Math.floor((Math.floor(this.heat) + (slots.length - 1)) * this.intensity),
+    );
     const active = this.activeCops;
 
     this.spawnTimer -= dt;
@@ -409,7 +425,7 @@ export class Police {
       this._spawnNear(slots[Math.floor(Math.random() * slots.length)].player);
     }
 
-    const alertRadius = COP.sightRadius + this.heat * 3;
+    const alertRadius = (COP.sightRadius + this.heat * 3) * Math.min(1.3, this.intensity);
     const ctx = {
       collision: this.level.collision,
       effects: this.effects,

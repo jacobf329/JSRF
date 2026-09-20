@@ -78,3 +78,17 @@ window.addEventListener('keydown', (e) => {
 });
 
 window.__jsrf = game;
+
+// Dev only, and stripped from production builds: the verification harnesses
+// need to reach the data tables a running game only ever sees indirectly.
+if (import.meta.env && import.meta.env.DEV) {
+  Promise.all([
+    import('./gameplay/MissionData.js'),
+    import('./player/Rudies.js'),
+    import('./world/LevelData.js'),
+  ]).then(([missions, rudies, level]) => {
+    game.__missions = missions;
+    game.__rudies = rudies;
+    game.__level = level;
+  });
+}

@@ -41,8 +41,9 @@ export class HUD {
             <div class="stat"><span>Cans</span><span class="stat__num" data-cans>15</span></div>
           </div>
           <div class="tag-panel">
-            <div class="mission">Walls <span class="mission__count" data-tags>0/0</span></div>
-          <div class="mission__goal" data-goal></div>
+            <div class="mission"><span data-goal-label>Walls</span> <span class="mission__count" data-tags>0/0</span></div>
+            <div class="mission__goal" data-goal></div>
+            <div class="mission__bar"><div class="mission__fill" data-goal-fill></div></div>
           </div>
           <div class="tag-panel">
             <div class="crews" data-crews></div>
@@ -99,6 +100,8 @@ export class HUD {
     this.$cans = q('[data-cans]');
     this.$tags = q('[data-tags]');
     this.$crews = q('[data-crews]');
+    this.$goalLabel = q('[data-goal-label]');
+    this.$goalFill = q('[data-goal-fill]');
     this.$time = q('[data-time]');
     this.$heat = q('[data-heat]');
     this.$hearts = q('[data-hearts]');
@@ -149,6 +152,7 @@ export class HUD {
     this.width = 1;
     this.height = 1;
     this.objectiveTimer = 0;
+    this.queuedBanner = null;
     this._sprayKey = '';
 
     this._bind();
@@ -212,6 +216,18 @@ export class HUD {
     this.bannerTimer = duration;
   }
 
+  /**
+   * Show a banner once the objective card has cleared.
+   *
+   * The two share the middle of the screen and the briefing is the one worth
+   * reading, so this waits its turn. It waits in game time rather than on a
+   * timer, so pausing mid-briefing holds it back too.
+   */
+  bannerAfterObjective(text, color, duration) {
+    if (this.objectiveTimer <= 0) { this.banner(text, color, duration); return; }
+    this.queuedBanner = { text, color, duration };
+  }
+
   popup(worldPosition, text, color = '#ffffff') {
     const el = document.createElement('div');
     el.className = 'popup';
@@ -250,9 +266,16 @@ export class HUD {
 
     this.$cans.textContent = String(score.cans);
     this.$cans.classList.toggle('stat__num--low', score.cans < 3);
-    // Your crew's walls out of the whole map -- the turf war's only number.
-    this.$tags.textContent = `${graffiti.ownedBy(this.slot.gang)}/${graffiti.totalCount}`;
-    this.$goal.textContent = 'Most walls wins';
+    // Whatever this run is counting, and how close it is to enough.
+    if (mission) {
+      const progress = Math.floor(mission.progress);
+      const target = Math.floor(mission.target);
+      this.$goalLabel.textContent = mission.goalLabel;
+      this.$tags.textContent = `${formatScore(progress)}/${formatScore(target)}`;
+      this.$goal.textContent = mission.def.free ? 'Most walls wins' : mission.def.name;
+      this.$goalFill.style.transform = `scaleX(${clamp(progress / Math.max(1, target), 0, 1)})`;
+      this.$goalFill.classList.toggle('mission__fill--done', mission.goalMet);
+    }
     this.$time.textContent = formatTime(mission ? mission.timeLeft : 0);
     this.$time.classList.toggle('stat__num--low', !!mission && mission.timeLeft < 30);
 
@@ -277,6 +300,12 @@ export class HUD {
     this._updatePrompt(game);
     this._updateSpray(game);
     this._updatePopups(dt);
+
+    if (this.queuedBanner && this.objectiveTimer <= 0) {
+      const q = this.queuedBanner;
+      this.queuedBanner = null;
+      this.banner(q.text, q.color, q.duration);
+    }
 
     if (this.bannerTimer > 0) {
       this.bannerTimer -= dt;
@@ -315,6 +344,9 @@ export class HUD {
    * every pane, and four players means four of these.
    */
   _updateCrews(game) {
+    const contested = game.rivals.list.length > 0 || game.playerCount > 1;
+    this.$crews.parentElement.style.display = contested ? '' : 'none';
+    if (!contested) return;
     const rows = game.mission.standings;
     const key = rows.map((r) => `${r.short}${r.walls}`).join('|');
     if (key === this._crewKey) return;

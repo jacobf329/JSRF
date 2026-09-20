@@ -66,9 +66,11 @@ const _hit = { point: new THREE.Vector3(), normal: new THREE.Vector3(), distance
  * skater that cannot reach a wall is a skater that never contests anything.
  */
 class Rival {
-  constructor(gang, scene, bounds) {
+  constructor(gang, scene, region) {
     this.gang = gang;
-    this.bounds = bounds;
+    // Where this skater is allowed to be: the whole map, or one district when
+    // the run is scoped to one.
+    this.region = region;
     this.model = new PlayerModel(gang.id);
     scene.add(this.model.root);
 
@@ -308,12 +310,12 @@ class Rival {
     if (this.restFor > 0) return;
 
     const angle = Math.random() * Math.PI * 2;
-    const reach = R.roamDistance[0] + Math.random() * (R.roamDistance[1] - R.roamDistance[0]);
-    const edge = this.bounds - 20;
+    const g = this.region;
+    const reach = Math.min(g.radius, R.roamDistance[0] + Math.random() * (R.roamDistance[1] - R.roamDistance[0]));
     this.anchor.set(
-      clamp(this.position.x + Math.cos(angle) * reach, -edge, edge),
+      clamp(this.position.x + Math.cos(angle) * reach, g.cx - g.radius, g.cx + g.radius),
       this.position.y,
-      clamp(this.position.z + Math.sin(angle) * reach, -edge, edge),
+      clamp(this.position.z + Math.sin(angle) * reach, g.cz - g.radius, g.cz + g.radius),
     );
     this.detour = 0;
     this.noProgress = 0;
@@ -443,24 +445,34 @@ export class Rivals {
     this._blacklist = new Map();
   }
 
-  /** Stand up one skater for each gang no human is using. */
-  setGangs(gangs) {
+  /**
+   * Stand up one skater for each gang in the list, inside `region`.
+   *
+   * A city-wide run passes no region and gets the whole map; a district
+   * mission passes one, and the crews stay in it rather than wandering off to
+   * paint walls the run is not counting.
+   */
+  setGangs(gangs, region = null) {
     for (const rival of this.list) rival.dispose(this.scene);
     const bounds = this.level.bounds || 300;
-    this.list = gangs.map((gang) => new Rival(gang, this.scene, bounds));
+    this.region = region || { cx: 0, cz: 0, radius: bounds - 20, district: null };
+    this.list = gangs.map((gang) => new Rival(gang, this.scene, this.region));
     this._blacklist = new Map();
     this.reset();
   }
 
   reset() {
-    const posts = this.level.policePosts;
+    const g = this.region || { cx: 0, cz: 0, radius: 280 };
+    // Start each crew somewhere else, so the first minute is not a scrum over
+    // one corner. Anywhere in the region will do -- they fall to the ground.
+    const posts = this.level.policePosts.filter(
+      (p) => Math.abs(p.x - g.cx) <= g.radius && Math.abs(p.z - g.cz) <= g.radius,
+    );
     for (let i = 0; i < this.list.length; i++) {
       const rival = this.list[i];
-      // Start each crew in a different district so the first minute is not a
-      // scrum over the plaza.
       const post = posts.length
         ? posts[Math.floor((i + 0.5) * posts.length / Math.max(1, this.list.length)) % posts.length]
-        : this.level.spawn;
+        : this.level.districtSpawn(g.district);
       _v.copy(post).setY(post.y + 1.2);
       rival.spawn(_v);
       this._blacklist.set(rival, new Set());
@@ -497,8 +509,10 @@ export class Rivals {
   _bodyChecks(rival, game) {
     for (const slot of game.slots) {
       const player = slot.player;
-      if (player.speed < R.bodyCheckSpeed) continue;
-      if (rival.position.distanceTo(player.position) > R.bodyCheckRadius) continue;
+      // Power decides how hard you have to be going, and from how far out.
+      const t = player.traits || { checkSpeed: 1, checkRadius: 1 };
+      if (player.speed < R.bodyCheckSpeed * t.checkSpeed) continue;
+      if (rival.position.distanceTo(player.position) > R.bodyCheckRadius * t.checkRadius) continue;
       if (!rival.knockdown(player.velocity, game.graffiti)) continue;
       _v.copy(rival.position).setY(rival.position.y + 1);
       this.effects.burst(_v, rival.gang.color, 26, 7);

@@ -84,10 +84,16 @@ results.basis = await page.evaluate(() => {
   };
 });
 
-// --- menus, using only the pad: A starts the run ---
+// --- menus, using only the pad ---
+// Solo, A on the title opens the mission list; A again starts the first
+// mission. Both steps have to work from the pad alone.
 await tapButton(0);
 await gwait(0.3);
+results.openedMissions = await page.evaluate(() => window.__jsrf.mode);
+await tapButton(0);
+await gwait(0.4);
 results.startedFromPad = await page.evaluate(() => window.__jsrf.mode);
+results.missionFromPad = await page.evaluate(() => window.__jsrf.mission.def.id);
 results.seatOne = await page.evaluate(() => window.__jsrf.slots[0].input.id);
 
 // --- stick right actually moves right on screen ---
@@ -181,7 +187,8 @@ await page.screenshot({ path: 'scratch/gamepad.png' });
 const ok = {
   padSeen: results.padDetected === 1,
   padTakesSeatOne: results.seatOne.startsWith('pad'),
-  menuFromPad: results.startedFromPad === 'playing',
+  missionListFromPad: results.openedMissions === 'missions',
+  menuFromPad: results.startedFromPad === 'playing' && results.missionFromPad === 'first-marks',
   rightIsRight: results.basis.rightAtYaw0[0] < -0.9 && Math.abs(results.basis.rightAtYaw0[1]) < 0.1,
   forwardUnchanged: results.basis.forwardAtYaw0[1] > 0.9,
   rightAtYaw90: results.basis.rightAtYaw90[1] > 0.9,

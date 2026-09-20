@@ -4,8 +4,9 @@ import { Sky } from '../render/Sky.js';
 import { computeViewports, seams, spareCell } from '../render/Viewports.js';
 import { InputManager } from './InputManager.js';
 import { Events } from './Events.js';
-import { clamp } from './MathUtils.js';
+import { clamp, formatScore } from './MathUtils.js';
 import { Level } from '../world/Level.js';
+import { DISTRICTS } from '../world/LevelData.js';
 import { PSTATE } from '../player/Player.js';
 import { PlayerSlot } from './PlayerSlot.js';
 import { Effects } from '../gameplay/Effects.js';
@@ -15,6 +16,8 @@ import { Police } from '../gameplay/Police.js';
 import { Mission } from '../gameplay/Mission.js';
 import { Rivals } from '../gameplay/Rivals.js';
 import { GANGS } from '../gameplay/Gangs.js';
+import { FREE_SKATE, MISSION_BY_ID, missionState } from '../gameplay/MissionData.js';
+import { RUDIES, rudieById } from '../player/Rudies.js';
 import { Menus } from '../ui/Menus.js';
 import { AudioEngine } from '../audio/Audio.js';
 import { MAX_PLAYERS } from './Constants.js';
@@ -28,6 +31,7 @@ export { MAX_PLAYERS };
 
 export const MODE = {
   TITLE: 'title',
+  MISSIONS: 'missions',
   PLAYING: 'playing',
   PAUSED: 'paused',
   BUSTED: 'busted',
@@ -35,6 +39,13 @@ export const MODE = {
 };
 
 const _v = new THREE.Vector3();
+
+// Each district is a 150m-half square of the map; rivals in a district mission
+// are kept inside it with a little slack so they can use its edges.
+function districtRegion(id) {
+  const d = DISTRICTS[id] || DISTRICTS.terminal;
+  return { cx: d.centre[0], cz: d.centre[1], radius: 140 };
+}
 
 // Dev only, and stripped from production builds: the asset-pipeline test needs
 // a THREE to build a fixture model with.
@@ -133,6 +144,8 @@ export class Game {
     this.audio.setMasterVolume(settings.masterVolume);
     this.audio.setMusicEnabled(settings.musicEnabled);
     for (const slot of this.allSlots) slot.hud.showFps = !!settings.showFps && slot.index === 0;
+    const chosen = rudieById(settings.rudie || 'beat');
+    if (this.slots[0] && this.profile.hasRudie(chosen)) this.slots[0].setRudie(chosen);
     this.menus.refreshPlayers();
     this.menus.setBest(this.profile.bestFor(this.playerCount));
   }
@@ -323,6 +336,19 @@ export class Game {
       // not the ones the rivals filled in around them.
       const painted = stats.players.reduce((n, p) => n + p.tags, 0);
       this.profile.recordRun({ tags: painted, time: stats.time });
+
+      // Only a won mission files progress; a free skate never does, and a
+      // failed run leaves whatever was already there alone.
+      if (!stats.free && stats.won) {
+        stats.progress = this.profile.recordMission(stats.mission.id, {
+          medal: stats.medal,
+          metric: stats.metric,
+          time: stats.time,
+          unlocks: stats.mission.unlocks || null,
+        });
+        stats.opened = this._describeUnlocks(stats.progress.opened);
+      }
+
       this.menus.showResults(stats);
       this.setMode(MODE.RESULTS);
     });
@@ -345,6 +371,7 @@ export class Game {
 
     switch (mode) {
       case MODE.TITLE: this.menus.show('title'); break;
+      case MODE.MISSIONS: break;   // showMissions draws and shows it
       case MODE.PAUSED: this.menus.show('pause'); break;
       case MODE.BUSTED: this.menus.showBusted(); break;
       case MODE.RESULTS: break;
@@ -367,6 +394,22 @@ export class Game {
         this.audio.init();
         this.startRun();
         break;
+      case 'missions':
+        this.showMissions();
+        break;
+      case 'mission': {
+        const def = MISSION_BY_ID.get(value);
+        if (def) this.startMission(def);
+        break;
+      }
+      case 'rudie': {
+        const rudie = rudieById(value);
+        if (!this.profile.hasRudie(rudie)) break;
+        this.slots[0].setRudie(rudie);
+        this.profile.set('rudie', rudie.id);
+        this.showMissions();
+        break;
+      }
       case 'resume':
         this.setMode(MODE.PLAYING);
         break;
@@ -380,14 +423,68 @@ export class Game {
       case 'quit':
         this.setMode(MODE.TITLE);
         break;
+      case 'again':
+        // Replay the run that just finished, rather than free skate.
+        this.startMission(this.mission.def);
+        break;
       default: break;
     }
   }
 
-  startRun() {
+  /**
+   * Set up and start a mission.
+   *
+   * Everything a run can vary -- which district is in play, how many crews are
+   * out, how hard the police push, where everyone starts -- is configured from
+   * the mission definition here, so Mission itself stays a rules object and
+   * nothing else in the game has to know which run is being played.
+   */
+  startMission(def) {
+    const setup = this.mission.setMission(def || FREE_SKATE);
+
+    this.graffiti.setDistrict(setup.district);
+    this.police.setIntensity(setup.police);
+
+    const region = setup.district
+      ? { ...districtRegion(setup.district), district: setup.district }
+      : null;
+    this.rivals.setGangs(GANGS.slice(this.playerCount, this.playerCount + setup.rivals), region);
+
+    const spawn = setup.district ? this.level.districtSpawn(setup.district) : this.level.spawn.clone();
+    for (const slot of this.slots) slot.setSpawn(spawn, this.level.spawnHeading);
+
+    this.audio.init();
     this.restart();
     this._brief();
-    this.slots[0].hud.banner(`NOW PLAYING: ${this.audio.trackName}`, '#24d6ff', 2.2);
+    this.slots[0].hud.bannerAfterObjective(`NOW PLAYING: ${this.audio.trackName}`, '#24d6ff', 2.2);
+  }
+
+  startRun() {
+    this.startMission(FREE_SKATE);
+  }
+
+  /** Turn a set of unlocked ids into something worth reading on a screen. */
+  _describeUnlocks(opened) {
+    const out = [];
+    for (const id of opened.districts || []) {
+      const district = DISTRICTS[id];
+      out.push(district ? district.name : id === 'allcity' ? 'ALL CITY' : id.toUpperCase());
+    }
+    for (const id of opened.rudies || []) {
+      const rudie = RUDIES.find((r) => r.id === id);
+      if (rudie) out.push(`${rudie.name} joins the crew`);
+    }
+    return out;
+  }
+
+  /** Draw the mission list against what has actually been unlocked. */
+  showMissions() {
+    const progress = this.profile.progress;
+    this.setMode(MODE.MISSIONS);
+    this.menus.showMissions(missionState(progress), {
+      rudies: progress.rudies,
+      rudieId: this.slots[0] ? this.slots[0].rudie.id : 'beat',
+    });
   }
 
   /**
@@ -397,19 +494,18 @@ export class Game {
    * holding a controller.
    */
   _brief() {
-    const walls = this.graffiti.totalCount;
-    const rivals = this.rivals.list.map((r) => r.gang.name).join(', ');
-    const minutes = Math.round(this.mission.duration / 60);
+    const m = this.mission;
+    const def = m.def;
+    const lines = def.brief ? [...def.brief] : [
+      `${this.graffiti.totalCount} walls. Hold the most when the clock stops.`,
+      'Paint over a rival\'s tag to take the wall: one more arrow, nearly double.',
+      'Skate through a rival at speed and they drop what they were painting.',
+    ];
+    const goal = m.rules.won
+      ? 'HOLD MORE WALLS THAN ANY CREW'
+      : `${m.goalLabel}: ${formatScore(m.target)}`;
     for (const slot of this.slots) {
-      slot.hud.showObjective([
-        `TURF WAR &mdash; ${slot.gang.name}`,
-        `${walls} walls across five districts. Hold the most when the clock stops.`,
-        rivals
-          ? `You are up against ${rivals}. Paint over their tags to take the wall &mdash;`
-          : 'Paint over the other crews\' tags to take the wall &mdash;',
-        'a takeover costs an extra step and pays nearly double.',
-        `Skate through a rival at speed to put them down. ${minutes} minutes.`,
-      ], 7);
+      slot.hud.showObjective([def.name, ...lines, goal], 7);
     }
   }
 

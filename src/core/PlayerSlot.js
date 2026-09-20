@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { Player } from '../player/Player.js';
-import { PlayerModel, RUDIE_SKINS } from '../player/PlayerModel.js';
+import { PlayerModel } from '../player/PlayerModel.js';
+import { RUDIES, DEFAULT_RUDIE } from '../player/Rudies.js';
 import { FollowCamera } from '../player/FollowCamera.js';
 import { Score } from '../gameplay/Score.js';
 import { HUD } from '../ui/HUD.js';
@@ -10,16 +11,20 @@ import { HUD } from '../ui/HUD.js';
  * camera, its score and its slice of the screen.
  */
 export class PlayerSlot {
-  constructor(index, { level, events, scene, uiRoot, input }) {
-    const skin = RUDIE_SKINS[index % RUDIE_SKINS.length];
+  constructor(index, { level, events, scene, uiRoot, input, rudie }) {
     this.index = index;
-    this.name = skin.name;
-    this.color = skin.jacket;
-    this.colorHex = `#${new THREE.Color(skin.jacket).getHexString()}`;
-
     this.scene = scene;
-    this.player = new Player(level, events, { index, name: skin.name, color: skin.jacket });
-    this.model = new PlayerModel(index);
+    this.level = level;
+    this.events = events;
+
+    const pick = rudie || RUDIES[index % RUDIES.length] || DEFAULT_RUDIE;
+    this.rudie = pick;
+    this.name = pick.name;
+    this.color = pick.jacket;
+    this.colorHex = `#${new THREE.Color(pick.jacket).getHexString()}`;
+
+    this.player = new Player(level, events, { index, rudie: pick, color: pick.jacket });
+    this.model = new PlayerModel(RUDIES.indexOf(pick));
     scene.add(this.model.root);
 
     this.camera = new THREE.PerspectiveCamera(64, 16 / 9, 0.1, 460);
@@ -52,6 +57,36 @@ export class PlayerSlot {
   }
 
   /**
+   * Swap which rudie is in this seat.
+   *
+   * The skater is rebuilt because its whole tuning table comes from the stat
+   * sheet; everything around it -- camera, HUD, score, seat index -- carries
+   * over untouched.
+   */
+  setRudie(rudie) {
+    if (!rudie || rudie === this.rudie) return;
+    this.rudie = rudie;
+    this.name = rudie.name;
+    this.color = rudie.jacket;
+    this.colorHex = `#${new THREE.Color(rudie.jacket).getHexString()}`;
+
+    const previous = this.player;
+    this.player = new Player(this.level, this.events, {
+      index: this.index, rudie, color: rudie.jacket,
+    });
+    this.player.position.copy(previous.position);
+    this.player.heading = previous.heading;
+    this.score.player = this.player;
+
+    this.scene.remove(this.model.root);
+    if (this.model.dispose) this.model.dispose();
+    this.model = new PlayerModel(RUDIES.indexOf(rudie));
+    this.model.root.visible = true;
+    this.scene.add(this.model.root);
+    this.followCamera.reset(this.player);
+  }
+
+  /**
    * Swap the visual rig, keeping everything else about the seat.
    *
    * Assets load after the game is already running, so the procedural rudie
@@ -68,6 +103,21 @@ export class PlayerSlot {
       this.scene.remove(previous.root);
       if (previous.dispose) previous.dispose();
     }
+  }
+
+  /**
+   * Move this seat's start point, for a run set somewhere other than the hub.
+   *
+   * Seats after the first fan out around it so nobody starts inside anybody.
+   */
+  setSpawn(point, heading) {
+    this.player.spawnPoint.copy(point);
+    if (this.index > 0) {
+      const a = (this.index / 4) * Math.PI * 2 + 0.6;
+      this.player.spawnPoint.x += Math.cos(a) * 5.5;
+      this.player.spawnPoint.z += Math.sin(a) * 5.5;
+    }
+    if (heading !== undefined) this.player.heading = heading;
   }
 
   setRect(rect, playerCount) {

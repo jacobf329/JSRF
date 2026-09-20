@@ -1,6 +1,8 @@
 import { Platform } from './Platform.js';
 
-const VERSION = 1;
+const VERSION = 2;
+
+const MEDAL_RANK = { bronze: 1, silver: 2, gold: 3 };
 
 function blank() {
   return {
@@ -14,6 +16,9 @@ function blank() {
     // Best banked score per player count, so a solo run and a four-player
     // free-for-all are not competing for the same number.
     best: {},
+    // Story progress. `missions` keeps the best result per mission; districts
+    // and rudies are the things clearing one opened up.
+    progress: { missions: {}, districts: [], rudies: [], rudie: 'beat' },
     stats: { runs: 0, tagsTotal: 0, playTime: 0 },
   };
 }
@@ -43,6 +48,7 @@ export class Profile {
         version: VERSION,
         settings: { ...fresh.settings, ...(stored.settings || {}) },
         best: { ...(stored.best || {}) },
+        progress: { ...fresh.progress, ...(stored.progress || {}) },
         stats: { ...fresh.stats, ...(stored.stats || {}) },
       };
     }
@@ -61,6 +67,60 @@ export class Profile {
     this.data.best[key] = Math.round(score);
     this.save();
     return true;
+  }
+
+  get progress() { return this.data.progress; }
+
+  /**
+   * File the result of a mission.
+   *
+   * Only an improvement is written: replaying a cleared mission for fun should
+   * never cost somebody the gold they already have. Returns what changed, so
+   * the results screen can say "new medal" and name what it opened up.
+   */
+  recordMission(id, { medal = null, metric = 0, time = 0, unlocks = null } = {}) {
+    const missions = this.data.progress.missions;
+    const previous = missions[id] || null;
+    const improved = !previous
+      || (MEDAL_RANK[medal] || 0) > (MEDAL_RANK[previous.medal] || 0)
+      || metric > (previous.metric || 0);
+
+    if (improved) {
+      missions[id] = {
+        medal: (MEDAL_RANK[medal] || 0) >= (MEDAL_RANK[previous && previous.medal] || 0)
+          ? medal
+          : previous.medal,
+        metric: Math.max(metric, previous ? previous.metric || 0 : 0),
+        time,
+      };
+    }
+
+    const opened = { districts: [], rudies: [] };
+    if (unlocks) {
+      for (const key of ['districts', 'rudies']) {
+        for (const value of unlocks[key] || []) {
+          if (this.data.progress[key].includes(value)) continue;
+          this.data.progress[key].push(value);
+          opened[key].push(value);
+        }
+      }
+    }
+
+    this.save();
+    return {
+      first: !previous,
+      improved,
+      previous,
+      record: missions[id] || null,
+      opened,
+      anyOpened: opened.districts.length > 0 || opened.rudies.length > 0,
+    };
+  }
+
+  /** True when this rudie is on the roster -- either from the start or earned. */
+  hasRudie(rudie) {
+    if (!rudie) return false;
+    return !rudie.locked || this.data.progress.rudies.includes(rudie.id);
   }
 
   recordRun({ tags = 0, time = 0 } = {}) {

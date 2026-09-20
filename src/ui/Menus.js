@@ -1,5 +1,17 @@
 import { formatScore, formatTime } from '../core/MathUtils.js';
 import { MAX_PLAYERS } from '../core/Constants.js';
+import { RUDIES } from '../player/Rudies.js';
+
+const MEDAL_GLYPH = { gold: '\u25c6', silver: '\u25c6', bronze: '\u25c6' };
+
+const TYPE_LABEL = {
+  tagRun: 'tag run',
+  turf: 'turf war',
+  score: 'score',
+  trick: 'trick',
+  collect: 'collect',
+  takedown: 'takedown',
+};
 
 // Gamepad first: it is how this is meant to be played.
 const CONTROLS = [
@@ -12,6 +24,13 @@ const CONTROLS = [
   ['Start', 'Pause'],
   ['Keyboard', 'WASD, Space, Shift, E, mouse'],
 ];
+
+/** Numeric controls carry data-value; the string ones carry data-id. */
+function valueOf(el) {
+  if (el.dataset.value !== undefined) return Number(el.dataset.value);
+  if (el.dataset.id !== undefined) return el.dataset.id;
+  return undefined;
+}
 
 function controlsMarkup() {
   return `<dl class="controls">${CONTROLS.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>`;
@@ -36,8 +55,20 @@ export class Menus {
         </div>
 
         <div class="picker__best" data-best></div>
-        <button class="btn btn--big" data-action="start">Skate</button>
+        <div class="btn-row">
+          <button class="btn btn--big" data-action="missions">Missions</button>
+          <button class="btn" data-action="start">Free skate</button>
+        </div>
         ${controlsMarkup()}
+      </div>
+
+      <div class="screen clickable" data-screen="missions">
+        <h1 class="screen__title" style="font-size:clamp(28px,5vw,62px)">MISSIONS</h1>
+        <div class="roster" data-roster></div>
+        <div class="chapters" data-chapters></div>
+        <div class="btn-row">
+          <button class="btn" data-action="quit">Back</button>
+        </div>
       </div>
 
       <div class="screen clickable" data-screen="pause">
@@ -65,7 +96,8 @@ export class Menus {
         <div class="results__record" data-results-record style="display:none">NEW RECORD</div>
         <div data-results-body></div>
         <div class="btn-row">
-          <button class="btn" data-action="restart">Run it again</button>
+          <button class="btn" data-action="again">Run it again</button>
+          <button class="btn" data-action="missions">Missions</button>
           <button class="btn" data-action="quit">Title screen</button>
         </div>
       </div>
@@ -76,6 +108,8 @@ export class Menus {
     for (const s of this.el.querySelectorAll('[data-screen]')) {
       this.screens[s.dataset.screen] = s;
     }
+    this.$chapters = this.el.querySelector('[data-chapters]');
+    this.$roster = this.el.querySelector('[data-roster]');
     this.$players = this.el.querySelector('[data-players]');
     this.$devices = this.el.querySelector('[data-devices]');
     this.$best = this.el.querySelector('[data-best]');
@@ -93,8 +127,7 @@ export class Menus {
       const btn = ev.target.closest('[data-action]');
       if (!btn) return;
       ev.stopPropagation();
-      const value = btn.dataset.value !== undefined ? Number(btn.dataset.value) : undefined;
-      this.onAction?.(btn.dataset.action, value);
+      this.onAction?.(btn.dataset.action, valueOf(btn));
     });
 
     // Pointer users and pad users share one notion of "the focused control",
@@ -126,6 +159,11 @@ export class Menus {
     if (!items.length) return;
     this.focusIndex = ((index % items.length) + items.length) % items.length;
     items.forEach((el, i) => el.classList.toggle('is-focused', i === this.focusIndex));
+    const focused = items[this.focusIndex];
+    if (focused && focused.scrollIntoView) {
+      focused.scrollIntoView({ block: 'nearest' });
+    }
+    if (this.current === 'missions') this._describeRudie();
   }
 
   /**
@@ -144,13 +182,13 @@ export class Menus {
     const items = this.focusables();
     const el = items[this.focusIndex];
     if (!el) return;
-    const value = el.dataset.value !== undefined ? Number(el.dataset.value) : undefined;
-    this.onAction?.(el.dataset.action, value);
+    this.onAction?.(el.dataset.action, valueOf(el));
   }
 
-  /** B / Escape: resume from the pause screen, ignored elsewhere. */
+  /** B / Escape: resume, or step back out of the mission list. */
   back() {
     if (this.current === 'pause') this.onAction?.('resume');
+    else if (this.current === 'missions') this.onAction?.('quit');
   }
 
   /** The record for the current player count, or nothing if there isn't one. */
@@ -179,6 +217,69 @@ export class Menus {
     }
   }
 
+  /**
+   * Draw the mission list and the roster.
+   *
+   * Locked rows stay visible but unfocusable, so the shape of what is left to
+   * do is readable from the first run rather than appearing a row at a time.
+   */
+  showMissions(state, { rudies = [], rudieId = 'beat' } = {}) {
+    this.$chapters.innerHTML = state.map((group) => `
+      <div class="chapter${group.locked ? ' is-locked' : ''}">
+        <div class="chapter__name">${group.chapter.name}${group.locked ? ' &mdash; locked' : ''}</div>
+        ${group.rows.map((row) => {
+      const m = row.mission;
+      const medal = row.record && row.record.medal;
+      const tag = row.locked
+        ? '<span class="mission-row__lock">locked</span>'
+        : medal
+          ? `<span class="mission-row__medal is-${medal}">${MEDAL_GLYPH[medal]} ${medal}</span>`
+          : row.record ? '<span class="mission-row__medal">cleared</span>' : '';
+      return row.locked
+        ? `<div class="mission-row is-locked">
+             <span class="mission-row__name">${m.name}</span>
+             <span class="mission-row__type">${TYPE_LABEL[m.type] || m.type}</span>
+             ${tag}
+           </div>`
+        : `<button class="mission-row" data-action="mission" data-id="${m.id}">
+             <span class="mission-row__name">${m.name}</span>
+             <span class="mission-row__type">${TYPE_LABEL[m.type] || m.type}</span>
+             ${tag}
+           </button>`;
+    }).join('')}
+      </div>`).join('');
+
+    this.$roster.innerHTML = `
+      <div class="roster__label">Skater</div>
+      <div class="roster__row">
+        ${RUDIES.map((r) => {
+      const owned = rudies.includes(r.id) || !r.locked;
+      const stats = `${r.stats.speed}/${r.stats.technique}/${r.stats.power}`;
+      return owned
+        ? `<button class="roster__pick${r.id === rudieId ? ' is-on' : ''}" data-action="rudie" data-id="${r.id}"
+                   style="--crew:#${r.jacket.toString(16).padStart(6, '0')}">
+             <b>${r.name}</b><span>${stats}</span>
+           </button>`
+        : `<div class="roster__pick is-locked"><b>?????</b><span>locked</span></div>`;
+    }).join('')}
+      </div>
+      <div class="roster__blurb" data-roster-blurb></div>`;
+    this.$rosterBlurb = this.el.querySelector('[data-roster-blurb]');
+    this.show('missions');
+    this._describeRudie();
+  }
+
+  /** Say what the focused rudie is good at, under the row. */
+  _describeRudie() {
+    if (!this.$rosterBlurb) return;
+    const el = this.focusables()[this.focusIndex];
+    const id = el && el.dataset.action === 'rudie' ? el.dataset.id : null;
+    const rudie = RUDIES.find((r) => r.id === id);
+    this.$rosterBlurb.textContent = rudie
+      ? rudie.blurb
+      : 'Speed / technique / power. Every point in one is a point out of another.';
+  }
+
   show(name) {
     for (const key of Object.keys(this.screens)) {
       this.screens[key].classList.toggle('is-on', key === name);
@@ -189,7 +290,15 @@ export class Menus {
     // Land on the action somebody most likely wants, so a single press of A
     // does the obvious thing on every screen.
     const items = this.focusables();
-    const preferred = { title: 'start', pause: 'resume', busted: 'continue', results: 'restart' }[name];
+    // On the title, A does the obvious thing for the seats that are filled:
+    // the story for one player, straight into a turf war for a couch full.
+    const preferred = {
+      title: this.game.playerCount > 1 ? 'start' : 'missions',
+      missions: 'mission',
+      pause: 'resume',
+      busted: 'continue',
+      results: 'missions',
+    }[name];
     const index = items.findIndex((el) => el.dataset.action === preferred);
     this.setFocus(index >= 0 ? index : 0);
   }
@@ -206,20 +315,33 @@ export class Menus {
 
   showResults(stats) {
     const solo = stats.players.length === 1;
-    const rank = rankFor(stats, stats.players[0]);
-    const winner = stats.winner;
     const you = stats.players[0];
-    // A turf war is won on walls, so the headline is the crew that held the
-    // most -- which in a solo run may well not be yours.
-    this.el.querySelector('[data-results-rank]').textContent = winner
-      ? `${winner.name} TAKES THE CITY`
-      : 'NOBODY TAKES THE CITY';
-    this.el.querySelector('[data-results-sub]').textContent = solo
-      ? `You held ${you.walls} of ${stats.totalTags} walls in ${formatTime(stats.time)} \u2014 rank ${rank}`
-      : `${stats.totalTags} walls, ${stats.unclaimed} still unclaimed after ${formatTime(stats.time)}`;
+    const $rank = this.el.querySelector('[data-results-rank]');
+    const $sub = this.el.querySelector('[data-results-sub]');
     const banner = this.el.querySelector('[data-results-record]');
-    banner.textContent = stats.record ? 'NEW RECORD' : '';
-    banner.style.display = stats.record ? '' : 'none';
+
+    if (stats.free) {
+      // Free skate has nothing to clear, so the headline is who took the city.
+      const winner = stats.winner;
+      $rank.textContent = winner ? `${winner.name} TAKES THE CITY` : 'NOBODY TAKES THE CITY';
+      $sub.textContent = solo
+        ? `You held ${you.walls} of ${stats.totalTags} walls in ${formatTime(stats.time)} \u2014 rank ${rankFor(stats, you)}`
+        : `${stats.totalTags} walls, ${stats.unclaimed} still unclaimed after ${formatTime(stats.time)}`;
+      banner.textContent = stats.record ? 'NEW RECORD' : '';
+      banner.style.display = stats.record ? '' : 'none';
+    } else {
+      $rank.textContent = stats.won ? stats.mission.name : 'RUN FAILED';
+      $rank.style.color = stats.won ? '' : '#ff4d4d';
+      $sub.textContent = stats.won
+        ? `${stats.metricLabel}: ${formatScore(stats.metric)}`
+        : `${stats.goalLabel}: ${formatScore(Math.floor(stats.progress))} of ${formatScore(stats.target)}`;
+      const medal = stats.medal;
+      const opened = stats.opened || [];
+      banner.textContent = medal
+        ? `${medal.toUpperCase()} MEDAL${opened.length ? ` \u2014 UNLOCKED: ${opened.join(', ')}` : ''}`
+        : opened.length ? `UNLOCKED: ${opened.join(', ')}` : '';
+      banner.style.display = banner.textContent ? '' : 'none';
+    }
 
     const crews = `<table class="scoreboard scoreboard--crews">
         <thead><tr><th></th><th>Crew</th><th>Walls</th><th>Score</th></tr></thead>
@@ -234,8 +356,17 @@ export class Menus {
         </tbody>
       </table>`;
 
+    const ladder = stats.medals ? `
+      <div class="medals">
+        ${['gold', 'silver', 'bronze'].filter((k) => stats.medals[k] !== undefined).map((k) => `
+          <div class="medals__row${stats.medal === k ? ' is-on' : ''}">
+            <span class="medals__name is-${k}">${MEDAL_GLYPH[k]} ${k}</span>
+            <span class="medals__need">${stats.metricLabel} ${formatScore(stats.medals[k])}+</span>
+          </div>`).join('')}
+      </div>` : '';
+
     const body = solo
-      ? crews + `<div class="results">
+      ? (stats.free ? crews : ladder) + `<div class="results">
           <span>Walls held</span><b>${you.walls}/${stats.totalTags}</b>
           <span>Walls painted</span><b>${you.tags}</b>
           <span>Taken off rivals</span><b>${you.steals}</b>

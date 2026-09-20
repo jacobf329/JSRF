@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { SKATER as C } from './PlayerConfig.js';
+import { skaterConfigFor, traitsFor, DEFAULT_RUDIE } from './Rudies.js';
 import { SURFACE } from '../world/Collision.js';
 import { RAIL_TYPE } from '../world/Rail.js';
 import { clamp, dampAngle, damp } from '../core/MathUtils.js';
@@ -39,7 +39,12 @@ const _tangent = new THREE.Vector3();
 export class Player {
   constructor(level, events, options = {}) {
     this.index = options.index ?? 0;
-    this.name = options.name ?? 'RUDIE';
+    // Each rudie skates on their own copy of the tuning table, so a stat sheet
+    // is a real difference in handling rather than a number on a menu.
+    this.rudie = options.rudie || DEFAULT_RUDIE;
+    this.C = skaterConfigFor(this.rudie);
+    this.traits = traitsFor(this.rudie);
+    this.name = options.name ?? this.rudie.name;
     this.color = options.color ?? 0x24d6ff;
     this.level = level;
     this.collision = level.collision;
@@ -68,7 +73,7 @@ export class Player {
     this.lastGroundedTime = 0;
     this.time = 0;
 
-    this.boost = C.boostMax;
+    this.boost = this.C.boostMax;
     this.boosting = false;
     this.health = 3;
     this.invulnerable = 0;
@@ -127,7 +132,7 @@ export class Player {
   }
 
   get eyePosition() {
-    return _tmp2.copy(this.position).addScaledVector(_up, C.height * 0.85);
+    return _tmp2.copy(this.position).addScaledVector(_up, this.C.height * 0.85);
   }
 
   setState(next) {
@@ -150,7 +155,7 @@ export class Player {
     if (this.noRelatchTimer <= 0) this.noRelatchRail = null;
     this.wallrideCooldown = Math.max(0, this.wallrideCooldown - dt);
     this.jumpBuffer = Math.max(0, this.jumpBuffer - dt);
-    if (input.pressed('jump')) this.jumpBuffer = C.jumpBufferTime;
+    if (input.pressed('jump')) this.jumpBuffer = this.C.jumpBufferTime;
 
     this._updateBoost(dt, input);
 
@@ -172,16 +177,16 @@ export class Player {
 
   _updateBoost(dt, input) {
     const wants = input.down('boost') && !this.isLocked;
-    if (wants && this.boost > (this.boosting ? 0 : C.boostMinToStart)) {
+    if (wants && this.boost > (this.boosting ? 0 : this.C.boostMinToStart)) {
       this.boosting = true;
-      this.boost = Math.max(0, this.boost - C.boostDrain * dt);
+      this.boost = Math.max(0, this.boost - this.C.boostDrain * dt);
       if (this.boost <= 0) this.boosting = false;
     } else {
       this.boosting = false;
-      let regen = C.boostRegen;
-      if (this.state === PSTATE.GRIND) regen = C.boostRegenGrind;
-      else if (this.state === PSTATE.WALLRIDE) regen = C.boostRegenGrind * 0.8;
-      this.boost = Math.min(C.boostMax, this.boost + regen * dt);
+      let regen = this.C.boostRegen;
+      if (this.state === PSTATE.GRIND) regen = this.C.boostRegenGrind;
+      else if (this.state === PSTATE.WALLRIDE) regen = this.C.boostRegenGrind * 0.8;
+      this.boost = Math.min(this.C.boostMax, this.boost + regen * dt);
     }
   }
 
@@ -211,8 +216,8 @@ export class Player {
     if (throttle > 0.12) {
       const desired = Math.atan2(_inputDir.x, _inputDir.z);
       const rate = this.grounded
-        ? THREE.MathUtils.lerp(C.turnRateSlow, C.turnRateFast, clamp(this.groundSpeed / C.maxSpeed, 0, 1))
-        : C.airTurnRate;
+        ? THREE.MathUtils.lerp(this.C.turnRateSlow, this.C.turnRateFast, clamp(this.groundSpeed / this.C.maxSpeed, 0, 1))
+        : this.C.airTurnRate;
       this.heading = dampAngle(this.heading, desired, rate, dt);
     }
 
@@ -237,7 +242,7 @@ export class Player {
 
     // Skate grip: the wheels drag the velocity toward the facing direction.
     if (speed > 0.05) {
-      const grip = THREE.MathUtils.lerp(C.gripSlow, C.gripFast, clamp(speed / C.maxSpeed, 0, 1));
+      const grip = THREE.MathUtils.lerp(this.C.gripSlow, this.C.gripFast, clamp(speed / this.C.maxSpeed, 0, 1));
       const t = 1 - Math.exp(-grip * dt);
       _hv.x = THREE.MathUtils.lerp(_hv.x / speed, _fwd.x, t);
       _hv.z = THREE.MathUtils.lerp(_hv.z / speed, _fwd.z, t);
@@ -245,8 +250,8 @@ export class Player {
       _hv.set((_hv.x / l) * speed, 0, (_hv.z / l) * speed);
     }
 
-    const maxSpeed = this.boosting ? C.boostSpeed : C.maxSpeed;
-    const accel = this.boosting ? C.boostAccel : C.accel;
+    const maxSpeed = this.boosting ? this.C.boostSpeed : this.C.maxSpeed;
+    const accel = this.boosting ? this.C.boostAccel : this.C.accel;
 
     if (throttle > 0.12) {
       _hv.x += _fwd.x * accel * throttle * dt;
@@ -255,14 +260,14 @@ export class Player {
       _hv.x += _fwd.x * accel * 0.6 * dt;
       _hv.z += _fwd.z * accel * 0.6 * dt;
     } else {
-      const f = Math.exp(-C.friction * dt);
+      const f = Math.exp(-this.C.friction * dt);
       _hv.x *= f; _hv.z *= f;
     }
 
     // Slope gravity.
     _tmp2.set(0, -1, 0).addScaledVector(n, n.y);
-    _hv.x += _tmp2.x * C.slopeAccel * dt;
-    _hv.z += _tmp2.z * C.slopeAccel * dt;
+    _hv.x += _tmp2.x * this.C.slopeAccel * dt;
+    _hv.z += _tmp2.z * this.C.slopeAccel * dt;
 
     speed = Math.hypot(_hv.x, _hv.z);
     if (speed > maxSpeed) {
@@ -278,32 +283,32 @@ export class Player {
     // Follow the slope instead of launching off every bump.
     if (n.y > 0.2) this.velocity.y = -(n.x * _hv.x + n.z * _hv.z) / n.y;
 
-    this.lean = damp(this.lean, clamp(input.move.x * clamp(speed / C.maxSpeed, 0, 1), -1, 1), 8, dt);
+    this.lean = damp(this.lean, clamp(input.move.x * clamp(speed / this.C.maxSpeed, 0, 1), -1, 1), 8, dt);
 
     if (this.jumpBuffer > 0) this._jump();
   }
 
   _airMove(dt, input, throttle) {
     this.airTime += dt;
-    this.velocity.y -= C.gravity * dt;
+    this.velocity.y -= this.C.gravity * dt;
 
     if (this.jumpHeld > 0 && input.down('jump')) {
       this.jumpHeld -= dt;
-      this.velocity.y += C.jumpHoldBoost * dt;
+      this.velocity.y += this.C.jumpHoldBoost * dt;
     } else {
       this.jumpHeld = 0;
     }
 
     if (throttle > 0.12) {
-      const control = C.airControl * (this.boosting ? 1.6 : 1);
+      const control = this.C.airControl * (this.boosting ? 1.6 : 1);
       this.velocity.x += _fwd.x * control * throttle * dt;
       this.velocity.z += _fwd.z * control * throttle * dt;
     }
 
-    const drag = Math.exp(-C.airDrag * dt);
+    const drag = Math.exp(-this.C.airDrag * dt);
     this.velocity.x *= drag;
     this.velocity.z *= drag;
-    this.velocity.y = Math.max(this.velocity.y, -C.terminalVelocity);
+    this.velocity.y = Math.max(this.velocity.y, -this.C.terminalVelocity);
 
     this.lean = damp(this.lean, input.move.x * 0.6, 5, dt);
 
@@ -312,7 +317,7 @@ export class Player {
 
     // Two trick buttons in the air: A throws grabs and flips, X throws spins.
     // Spray is only ever used against a wall on the ground, so it is free here.
-    if (this.airTime > 0.1 && !this.trick && this.airTricks < C.maxAirTricks) {
+    if (this.airTime > 0.1 && !this.trick && this.airTricks < this.C.maxAirTricks) {
       if (this.jumpBuffer > 0) {
         this.jumpBuffer = 0;
         this._startTrick(input, false);
@@ -323,7 +328,7 @@ export class Player {
   }
 
   _jump() {
-    const canJump = this.grounded || (this.time - this.lastGroundedTime) < C.coyoteTime;
+    const canJump = this.grounded || (this.time - this.lastGroundedTime) < this.C.coyoteTime;
     if (!canJump) return;
     this.jumpBuffer = 0;
     this.grounded = false;
@@ -331,8 +336,8 @@ export class Player {
     this.airTricks = 0;
     // Jump off the surface normal so ramps and banks throw you outward.
     _tmp.copy(this.groundNormal).lerp(_up, 0.55).normalize();
-    this.velocity.addScaledVector(_tmp, C.jumpSpeed);
-    this.jumpHeld = C.jumpHoldTime;
+    this.velocity.addScaledVector(_tmp, this.C.jumpSpeed);
+    this.jumpHeld = this.C.jumpHoldTime;
     this.setState(PSTATE.AIR);
     this.events.emit('player:jump', { player: this });
   }
@@ -363,7 +368,7 @@ export class Player {
 
     for (let i = 0; i < steps; i++) {
       this.position.addScaledVector(this.velocity, sub);
-      const contacts = this.collision.resolveCapsule(this.position, C.radius, C.height);
+      const contacts = this.collision.resolveCapsule(this.position, this.C.radius, this.C.height);
       let stepGrounded = false;
       for (let c = 0; c < contacts.length; c++) {
         const contact = contacts[c];
@@ -418,10 +423,10 @@ export class Player {
     if (!this.grounded && this.velocity.y <= 0.5) {
       // Ground snap keeps stairs and small ledges from launching the skater.
       _tmp.copy(this.position).addScaledVector(_up, 0.25);
-      const hit = this.collision.raycast(_tmp, _rayDir, 0.25 + C.groundSnapDistance, _hit);
+      const hit = this.collision.raycast(_tmp, _rayDir, 0.25 + this.C.groundSnapDistance, _hit);
       if (hit && hit.normal.y > 0.5 && (wasAir ? this.airTime > 0.08 : true)) {
         const drop = hit.point.y;
-        if (this.position.y - drop < C.groundSnapDistance) {
+        if (this.position.y - drop < this.C.groundSnapDistance) {
           this.position.y = drop;
           this.groundNormal.copy(hit.normal);
           this.groundSurface = hit.surface;
@@ -480,18 +485,18 @@ export class Player {
     this.grindStability = 1;
     this.velocity.x *= 0.35;
     this.velocity.z *= 0.35;
-    this.velocity.y = C.bailBounce;
+    this.velocity.y = this.C.bailBounce;
     this.setState(PSTATE.BAIL);
     this.events.emit('player:bail', { player: this, reason });
   }
 
   _updateBail(dt) {
-    this.velocity.y -= C.gravity * dt;
-    const drag = Math.exp(-C.bailDrag * dt);
+    this.velocity.y -= this.C.gravity * dt;
+    const drag = Math.exp(-this.C.bailDrag * dt);
     this.velocity.x *= drag;
     this.velocity.z *= drag;
     this._integrate(dt);
-    if (this.stateTime > C.bailTime && (this.grounded || this.stateTime > 3)) {
+    if (this.stateTime > this.C.bailTime && (this.grounded || this.stateTime > 3)) {
       this.setState(this.grounded ? PSTATE.SKATE : PSTATE.AIR);
     }
   }
@@ -506,7 +511,7 @@ export class Player {
     this.trickFlip = 0;
     this.trickRoll = 0;
     this.events.emit('player:trick:complete', {
-      player: this, trick, progress: progress * C.trickAbortPayout, aborted: true,
+      player: this, trick, progress: progress * this.C.trickAbortPayout, aborted: true,
     });
   }
 
@@ -520,7 +525,7 @@ export class Player {
     const blocked = this.noRelatchTimer > 0 ? this.noRelatchRail : null;
     const hit = this.rails.find(
       this.position,
-      C.grindSnapDistance + C.radius,
+      this.C.grindSnapDistance + this.C.radius,
       blocked ? (rail) => rail !== blocked : null,
     );
     if (!hit) return;
@@ -532,8 +537,8 @@ export class Player {
     const dx = hit.point.x - this.position.x;
     const dy = hit.point.y - this.position.y;
     const dz = hit.point.z - this.position.z;
-    if (Math.hypot(dx, dz) > C.grindGrabRadius) return;
-    if (dy > C.grindGrabAbove || dy < -C.grindGrabBelow) return;
+    if (Math.hypot(dx, dz) > this.C.grindGrabRadius) return;
+    if (dy > this.C.grindGrabAbove || dy < -this.C.grindGrabBelow) return;
 
     // Only latch when moving roughly along the rail, or slow enough to just land on it.
     _hv.set(this.velocity.x, 0, this.velocity.z);
@@ -562,7 +567,7 @@ export class Player {
     this.rail = hit.rail;
     this.railDist = hit.along;
     this.railDir = dir;
-    this.railSpeed = Math.max(C.grindMinSpeed, Math.max(speed, Math.abs(this.velocity.y) * 0.5));
+    this.railSpeed = Math.max(this.C.grindMinSpeed, Math.max(speed, Math.abs(this.velocity.y) * 0.5));
     this.grindDistance = 0;
     this.grindVariant = 0;
     this.grindStability = 1;
@@ -581,14 +586,14 @@ export class Player {
 
     rail.getTangentAt(this.railDist, _tmp);
     const slope = -_tmp.y * this.railDir;
-    this.railSpeed += slope * C.grindGravity * dt;
+    this.railSpeed += slope * this.C.grindGravity * dt;
 
-    if (this.boosting) this.railSpeed += C.grindAccel * dt;
+    if (this.boosting) this.railSpeed += this.C.grindAccel * dt;
     const throttle = Math.hypot(input.move.x, input.move.y);
     this._inputWorldDir(input, _inputDir);
     if (throttle > 0.2) {
       const push = (_inputDir.x * _tmp.x + _inputDir.z * _tmp.z) * this.railDir;
-      this.railSpeed += push * C.grindAccel * 0.8 * throttle * dt;
+      this.railSpeed += push * this.C.grindAccel * 0.8 * throttle * dt;
     }
 
     // Leaning a new way on the rail switches stance, and tapping the trick
@@ -609,15 +614,15 @@ export class Player {
 
     // Holding one stance forever is not a combo, it is a nap. Stability drains
     // faster the quicker you are going; switching stance is the correction.
-    const bite = 1 + (this.railSpeed / C.grindMaxSpeed) * C.grindStabilitySpeedBite;
-    this.grindStability -= (dt / C.grindStabilityTime) * bite;
+    const bite = 1 + (this.railSpeed / this.C.grindMaxSpeed) * this.C.grindStabilitySpeedBite;
+    this.grindStability -= (dt / this.C.grindStabilityTime) * bite;
     if (this.grindStability <= 0) {
       this._exitGrind(false, input);
       this._bail('LOST THE RAIL');
       return;
     }
 
-    this.railSpeed = clamp(this.railSpeed, 1.2, C.grindMaxSpeed);
+    this.railSpeed = clamp(this.railSpeed, 1.2, this.C.grindMaxSpeed);
     const step = this.railSpeed * this.railDir * dt;
     this.railDist = rail.wrap(this.railDist + step);
     this.grindDistance += Math.abs(step);
@@ -648,26 +653,26 @@ export class Player {
     const rail = this.rail;
     const dist = this.grindDistance;
     this.rail = null;
-    this.grindCooldown = C.grindCooldown;
+    this.grindCooldown = this.C.grindCooldown;
     this.airTime = 0;
     this.airTricks = 0;
     if (hopped) {
       const boost = rail ? rail.boost : 1;
-      this.velocity.multiplyScalar(C.grindExitSpeedKeep * boost);
-      this.velocity.y = C.grindHopSpeed;
-      this.jumpHeld = C.jumpHoldTime;
+      this.velocity.multiplyScalar(this.C.grindExitSpeedKeep * boost);
+      this.velocity.y = this.C.grindHopSpeed;
+      this.jumpHeld = this.C.jumpHoldTime;
       // Bail in the direction you are holding, so stepping off sideways is a
       // decision rather than a wrestle with the rail.
       if (input) {
         const throttle = Math.hypot(input.move.x, input.move.y);
         if (throttle > 0.2) {
           this._inputWorldDir(input, _inputDir);
-          this.velocity.addScaledVector(_inputDir, C.grindBailSpeed * throttle);
+          this.velocity.addScaledVector(_inputDir, this.C.grindBailSpeed * throttle);
           this.heading = Math.atan2(_inputDir.x, _inputDir.z);
         }
       }
       this.noRelatchRail = rail;
-      this.noRelatchTimer = C.grindRelatchLockout;
+      this.noRelatchTimer = this.C.grindRelatchLockout;
     }
     this.setState(PSTATE.AIR);
     this.events.emit('player:grind:end', { player: this, distance: dist, hopped, rail });
@@ -679,7 +684,7 @@ export class Player {
     if (this.wallrideCooldown > 0 || !this._hasWallContact) return;
     if (this._wallSurface === SURFACE.SLICK) return;
     const speed = Math.hypot(this.velocity.x, this.velocity.z);
-    if (speed < C.wallrideMinSpeed) return;
+    if (speed < this.C.wallrideMinSpeed) return;
 
     const n = this._contactWall;
     _fwd.set(Math.sin(this.heading), 0, Math.cos(this.heading));
@@ -688,12 +693,12 @@ export class Player {
 
     this.wallNormal.copy(n).setY(0).normalize();
     this.wallTrick = pickWallTrick(0);
-    this.wallTimer = C.wallrideTime;
+    this.wallTimer = this.C.wallrideTime;
     // Project momentum along the wall so we keep speed.
     _tmp.copy(this.velocity);
     _tmp.addScaledVector(this.wallNormal, -_tmp.dot(this.wallNormal));
     this.velocity.copy(_tmp);
-    this.velocity.y = Math.max(this.velocity.y, C.wallrideRise * clamp(speed / C.maxSpeed, 0.4, 1.3));
+    this.velocity.y = Math.max(this.velocity.y, this.C.wallrideRise * clamp(speed / this.C.maxSpeed, 0.4, 1.3));
     this.setState(PSTATE.WALLRIDE);
     this.events.emit('player:wallride:start', { player: this });
   }
@@ -703,7 +708,7 @@ export class Player {
 
     // Stick to the wall.
     this.velocity.addScaledVector(this.wallNormal, -this.velocity.dot(this.wallNormal) - 1.2);
-    this.velocity.y -= C.wallrideDecay * dt;
+    this.velocity.y -= this.C.wallrideDecay * dt;
 
     const throttle = Math.hypot(input.move.x, input.move.y);
     this._inputWorldDir(input, _inputDir);
@@ -726,9 +731,9 @@ export class Player {
 
     if (this.jumpBuffer > 0) {
       this.jumpBuffer = 0;
-      this.velocity.addScaledVector(this.wallNormal, C.wallrideKick);
-      this.velocity.y = Math.max(this.velocity.y, C.jumpSpeed * 0.92);
-      this.jumpHeld = C.jumpHoldTime;
+      this.velocity.addScaledVector(this.wallNormal, this.C.wallrideKick);
+      this.velocity.y = Math.max(this.velocity.y, this.C.jumpSpeed * 0.92);
+      this.jumpHeld = this.C.jumpHoldTime;
       this._exitWallride();
       return;
     }
@@ -736,7 +741,7 @@ export class Player {
   }
 
   _exitWallride() {
-    this.wallrideCooldown = C.wallrideCooldown;
+    this.wallrideCooldown = this.C.wallrideCooldown;
     this.airTime = 0;
     this.airTricks = 0;
     const grounded = this.grounded;
@@ -749,10 +754,10 @@ export class Player {
   _startTrick(input, spinning) {
     const trick = pickAirTrick(input.move.x, input.move.y, this.airTricks, spinning);
     this.trick = trick;
-    this.trickDuration = trick.duration || C.trickTime;
+    this.trickDuration = trick.duration || this.C.trickTime;
     this.trickTimer = this.trickDuration;
     this.airTricks++;
-    this.boost = Math.min(C.boostMax, this.boost + C.boostRegenTrick);
+    this.boost = Math.min(this.C.boostMax, this.boost + this.C.boostRegenTrick);
     this.events.emit('player:trick', { player: this, trick, index: this.airTricks });
   }
 
@@ -822,7 +827,7 @@ export class Player {
   }
 
   _updateTag(dt) {
-    this.velocity.set(0, -C.gravity * 0.4, 0);
+    this.velocity.set(0, -this.C.gravity * 0.4, 0);
     this._integrate(dt);
     this.velocity.set(0, 0, 0);
   }
@@ -834,7 +839,7 @@ export class Player {
     _tmp.subVectors(this.position, fromPosition).setY(0);
     if (_tmp.lengthSq() < 1e-4) _tmp.set(0, 0, 1);
     _tmp.normalize();
-    this.velocity.copy(_tmp).multiplyScalar(C.hitKnockback);
+    this.velocity.copy(_tmp).multiplyScalar(this.C.hitKnockback);
     this.velocity.y = 7;
     this.rail = null;
     this.setState(PSTATE.HIT);
@@ -844,12 +849,12 @@ export class Player {
   }
 
   _updateHit(dt) {
-    this.velocity.y -= C.gravity * dt;
+    this.velocity.y -= this.C.gravity * dt;
     const drag = Math.exp(-2.0 * dt);
     this.velocity.x *= drag;
     this.velocity.z *= drag;
     this._integrate(dt);
-    if (this.stateTime > C.hitStun && (this.grounded || this.stateTime > 3)) {
+    if (this.stateTime > this.C.hitStun && (this.grounded || this.stateTime > 3)) {
       this.setState(this.grounded ? PSTATE.SKATE : PSTATE.AIR);
     }
   }
@@ -859,7 +864,7 @@ export class Player {
     this.velocity.set(0, 0, 0);
     this.rail = null;
     this.trick = null;
-    this.boost = C.boostMax;
+    this.boost = this.C.boostMax;
     this.invulnerable = 1.5;
     this.setState(PSTATE.AIR);
     this.events.emit('player:respawn', { player: this });
