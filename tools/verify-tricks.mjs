@@ -371,14 +371,29 @@ const travel = await page.evaluate(async () => {
   exitJumps.respawn = afterExit(throwTrick, () => { p.respawn(); p.state = 'air'; p.grounded = false; });
 
   // Catching a rail or a wall mid-trick: neither goes through completion.
-  exitJumps.railCatch = afterExit(throwTrick, () => {
+  // The trick was already counted and named in the chain when it was thrown,
+  // so these have to pay out what was completed, not drop it.
+  const paid = {};
+  const countPayout = (key, fn) => {
+    let got = 0;
+    // `on` hands back its own remover; without calling it the listener leaks
+    // into the next sub-case and counts that one's payout as well.
+    const stop = g.events.on('player:trick:complete', (e) => { got += e.progress; });
+    try {
+      return fn();
+    } finally {
+      stop();
+      paid[key] = +got.toFixed(3);
+    }
+  };
+  exitJumps.railCatch = countPayout('railCatch', () => afterExit(throwTrick, () => {
     p.state = 'grind';
     p.grindTrick = T.pickGrindTrick(0, 0, 0);
-  });
-  exitJumps.wallCatch = afterExit(throwTrick, () => {
+  }));
+  exitJumps.wallCatch = countPayout('wallCatch', () => afterExit(throwTrick, () => {
     p.state = 'wallride';
     p.wallTrick = T.WALL_TRICKS[0];
-  });
+  }));
 
   // And the one that the live-trick check could never reach: bailing out of a
   // grind long after a trick finished, where the hand-off state is stale.
@@ -472,7 +487,7 @@ const travel = await page.evaluate(async () => {
   return {
     held, moved, long,
     swing: { mid: +mid.toFixed(3), amplitude: swung.swingZ },
-    worstRatio: +worstRatio.toFixed(3), worstTrick, offenders, exitJumps,
+    worstRatio: +worstRatio.toFixed(3), worstTrick, offenders, exitJumps, paid,
     channels, strays,
   };
 });
@@ -522,6 +537,8 @@ const ok = {
   // Abort, wipeout, respawn, rail catch, wall catch, and a bail long after
   // the trick already settled -- every exit that is not the completion path.
   noExitFromATrickSnaps: Object.values(travel.exitJumps).every((e) => e.ratio <= 1),
+  // Landing on a rail or a wall mid-trick still pays for what was completed.
+  catchingARailStillPaysTheTrick: travel.paid.railCatch > 0 && travel.paid.wallCatch > 0,
   everyPoseChannelIsApplied: travel.channels.every((c) => c.applied),
   everyPoseChannelReturnsToRest: travel.channels.every((c) => c.returned),
   noPoseUsesAnUnknownChannel: travel.strays.length === 0,

@@ -848,10 +848,11 @@ export class Player {
     // Grinds and wall rides hold their stance for as long as they last, rather
     // than playing out over a fixed duration.
     if (this.state === PSTATE.GRIND && this.grindTrick) {
-      // A rail caught mid-trick ends it. Latching does not go through the
-      // completion path, so without this the spring would still be holding
-      // whatever it had before the trick and leaving the rail would snap.
-      if (this.trick) { this.trick = null; this._settleRotation(); }
+      // A rail caught mid-trick ends it, and cashes out what was completed:
+      // the trick had already been counted and named in the chain when it was
+      // thrown, so dropping it silently would charge for it and pay nothing.
+      // Landing on a rail is the same deal as pressing B -- keep what you got.
+      if (this.trick) this._abortTrick();
       this.trickPose = this.grindTrick.pose;
       this.trickPoseNext = this.grindTrick.pose;
       this.trickPoseMix = 0;
@@ -863,7 +864,7 @@ export class Player {
       return;
     }
     if (this.state === PSTATE.WALLRIDE) {
-      if (this.trick) { this.trick = null; this._settleRotation(); }
+      if (this.trick) this._abortTrick();
       this.trickPose = this.wallTrick ? this.wallTrick.pose : 'wallride';
       this.trickPoseNext = this.trickPose;
       this.trickPoseMix = 0;
