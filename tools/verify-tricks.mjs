@@ -262,51 +262,108 @@ const travel = await page.evaluate(async () => {
   // did at any point during the trick. A 2.5-turn McTwist genuinely moves 48
   // degrees in a frame and that is fine; the settle afterwards decelerating
   // from it is fine; a single frame that outruns the trick itself is a snap.
-  let worstAfter = 0;
-  let duringMax = 0;
+  // Budgets are per trick, not pooled: pooled, cork1080's 54 degrees a frame
+  // sets the allowance for every other trick in the catalogue and a slow one
+  // can snap freely inside it.
+  const offenders = [];
+  let worstRatio = 0;
   let worstTrick = null;
   const halfTurn = all.filter((x) => x.kind === 'air'
     && [x.spin, x.flip, x.roll].some((v) => Math.abs(v - Math.round(v)) > 0.01));
 
   const wrap = (a) => { let d = a % (Math.PI * 2); if (d > Math.PI) d -= Math.PI * 2; if (d <= -Math.PI) d += Math.PI * 2; return d; };
 
-  const chain = (tricks, gapFrames) => {
+  const reset = () => {
     p.setState('air');
     p.grounded = false;
     p.trick = null;
     p.trickSpin = 0; p.trickFlip = 0; p.trickRoll = 0;
     p.trickCarry = { spin: 0, flip: 0, roll: 0 };
     for (const a of ['spin', 'flip', 'roll']) { p.trickSettle[a].value = 0; p.trickSettle[a].velocity = 0; }
-    let prev = [0, 0, 0];
-    for (const t of tricks) {
-      p.trickCarry.spin = wrap(p.trickSpin);
-      p.trickCarry.flip = wrap(p.trickFlip);
-      p.trickCarry.roll = wrap(p.trickRoll);
-      p.trick = t;
-      p.trickDuration = t.duration || 0.5;
-      p.trickTimer = p.trickDuration;
-      const frames = Math.ceil(p.trickDuration * 60) + gapFrames;
-      let live = 0;
-      for (let i = 0; i < frames; i++) {
-        const wasLive = !!p.trick;
-        p._updateTrickAnimation(1 / 60);
-        const now = [p.trickSpin, p.trickFlip, p.trickRoll];
-        for (let k = 0; k < 3; k++) {
-          // Shortest path between the two orientations, not the raw
-          // difference: taking three whole turns out of a leftover changes the
-          // number by 6*pi and the picture by nothing at all.
-          const step = Math.abs(wrap(now[k] - prev[k]));
-          if (i === 0) continue;
-          if (wasLive) { duringMax = Math.max(duringMax, step); live = Math.max(live, step); }
-          else if (step > worstAfter) { worstAfter = step; worstTrick = t.id; }
-        }
-        prev = now;
-      }
-    }
   };
 
-  for (const t of halfTurn) chain([t], 30);              // each on its own
-  chain(halfTurn.slice(0, 8), 0);                        // thrown back to back
+  // One trick, then enough idle frames for the settle to run out.
+  const measure = (t, seed) => {
+    reset();
+    if (seed) {
+      // Leave the rig mid-unwind, the way a chained trick finds it.
+      p.trickSpin = seed; p.trickFlip = seed; p.trickRoll = seed;
+    }
+    p.trickCarry.spin = wrap(p.trickSpin);
+    p.trickCarry.flip = wrap(p.trickFlip);
+    p.trickCarry.roll = wrap(p.trickRoll);
+    p.trick = t;
+    p.trickDuration = t.duration || 0.5;
+    p.trickTimer = p.trickDuration;
+
+    let during = 0;
+    let after = 0;
+    let prev = [p.trickSpin, p.trickFlip, p.trickRoll];
+    const frames = Math.ceil(p.trickDuration * 60) + 60;
+    for (let i = 0; i < frames; i++) {
+      const wasLive = !!p.trick;
+      p._updateTrickAnimation(1 / 60);
+      const now = [p.trickSpin, p.trickFlip, p.trickRoll];
+      for (let k = 0; k < 3; k++) {
+        // Shortest path between the two orientations, not the raw difference:
+        // taking three whole turns out of a leftover changes the number by
+        // 6*pi and the picture by nothing at all. The hand-off frame counts.
+        const step = Math.abs(wrap(now[k] - prev[k]));
+        if (wasLive) during = Math.max(during, step);
+        else after = Math.max(after, step);
+      }
+      prev = now;
+    }
+    // Allow a floor, or a trick that barely rotates fails on its own settle.
+    const budget = Math.max(during, 0.2);
+    const ratio = after / budget;
+    if (ratio > worstRatio) { worstRatio = ratio; worstTrick = `${t.id}${seed ? ' (chained)' : ''}`; }
+    if (ratio > 1) offenders.push({ id: t.id, chained: !!seed, during: +during.toFixed(3), after: +after.toFixed(3) });
+  };
+
+  for (const t of halfTurn) {
+    measure(t, 0);
+    // And again starting from an unwinding half turn, which is the state a
+    // trick thrown straight after a 540 actually begins in.
+    measure(t, Math.PI * 0.9);
+  }
+
+  // Aborting mid-trick and wiping out are both exits the completion path does
+  // not cover, and both used to zero the rotation outright.
+  const exitJumps = {};
+  for (const [name, exit] of [
+    ['abort', () => p._abortTrick()],
+    ['bail', () => p._bail('TEST')],
+  ]) {
+    reset();
+    const t = all.find((x) => x.id === 'spin540');
+    p.trick = t;
+    p.trickDuration = t.duration;
+    p.trickTimer = t.duration;
+    // Same relative property as a completed trick: carrying on at the speed
+    // it was already turning is continuous, not a snap. The threshold has to
+    // be the trick's own rate, because it is aborted at its fastest.
+    let during = 0;
+    let prev = [p.trickSpin, p.trickFlip, p.trickRoll];
+    for (let i = 0; i < 24; i++) {
+      p._updateTrickAnimation(1 / 60);
+      const now = [p.trickSpin, p.trickFlip, p.trickRoll];
+      for (let k = 0; k < 3; k++) during = Math.max(during, Math.abs(wrap(now[k] - prev[k])));
+      prev = now;
+    }
+    const before = [p.trickSpin, p.trickFlip, p.trickRoll];
+    exit();
+    p.state = 'air';
+    let after = 0;
+    let last = before;
+    for (let i = 0; i < 30; i++) {
+      p._updateTrickAnimation(1 / 60);
+      const now = [p.trickSpin, p.trickFlip, p.trickRoll];
+      for (let k = 0; k < 3; k++) after = Math.max(after, Math.abs(wrap(now[k] - last[k])));
+      last = now;
+    }
+    exitJumps[name] = { during: +during.toFixed(3), after: +after.toFixed(3), ratio: +(after / Math.max(during, 0.2)).toFixed(3) };
+  }
 
   // --- no pose channel may latch.
   //
@@ -389,7 +446,7 @@ const travel = await page.evaluate(async () => {
   return {
     held, moved, long,
     swing: { mid: +mid.toFixed(3), amplitude: swung.swingZ },
-    worstAfter: +worstAfter.toFixed(3), duringMax: +duringMax.toFixed(3), worstTrick,
+    worstRatio: +worstRatio.toFixed(3), worstTrick, offenders, exitJumps,
     channels, strays,
   };
 });
@@ -432,7 +489,12 @@ const ok = {
     && Math.abs(travel.moved.endRoll - travel.moved.wanted.roll) < 0.02,
   // The closing key has to be applied at real strength, not as the pose fades.
   longTricksReachTheirLastShape: travel.long.lastKeyWeight > 0.8,
-  rotationNeverSnapsAfterATrick: travel.worstAfter <= travel.duringMax + 1e-6,
+  // Per trick: once it is over, the body must never turn further in a frame
+  // than it did during it. Measured alone and mid-unwind from a previous one.
+  rotationNeverSnapsAfterATrick: travel.offenders.length === 0,
+  // Pressing B to cash out, and wiping out, are exits of their own.
+  abortDoesNotSnap: travel.exitJumps.abort.ratio <= 1,
+  bailDoesNotSnap: travel.exitJumps.bail.ratio <= 1,
   everyPoseChannelIsApplied: travel.channels.every((c) => c.applied),
   everyPoseChannelReturnsToRest: travel.channels.every((c) => c.returned),
   noPoseUsesAnUnknownChannel: travel.strays.length === 0,

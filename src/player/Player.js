@@ -484,9 +484,6 @@ export class Player {
 
     this.airTime = 0;
     this.airTricks = 0;
-    this.trickSpin = 0;
-    this.trickFlip = 0;
-    this.trickRoll = 0;
     this.setState(PSTATE.SKATE);
     this.events.emit('player:land', { player: this, airTime, impact, tricks });
   }
@@ -502,10 +499,11 @@ export class Player {
     this.trickCarry.spin = 0;
     this.trickCarry.flip = 0;
     this.trickCarry.roll = 0;
-    for (const axis of ['spin', 'flip', 'roll']) {
-      this.trickSettle[axis].value = 0;
-      this.trickSettle[axis].velocity = 0;
-    }
+    // Hand over rather than zero: the spring assigns these every frame now, so
+    // zeroing collapses the rotation in one frame at the very start of a
+    // wipeout -- and the tumble only overrides pitch and roll, so the yaw pop
+    // would be plainly visible.
+    this._settleRotation();
     this.rail = null;
     this.airTime = 0;
     this.airTricks = 0;
@@ -528,15 +526,47 @@ export class Player {
     }
   }
 
+  /**
+   * Hand the live trick rotation over to the settle spring.
+   *
+   * Outside a trick the spring owns these three values and assigns them every
+   * frame, so any path that ends a trick has to seed it rather than writing
+   * the rotation directly -- a direct write is overwritten on the same frame,
+   * and leaving the spring stale makes the body snap to whatever it was last
+   * holding. Whole turns come out here because they are invisible: unwinding
+   * them would spin the body all the way back round.
+   */
+  _settleRotation(dt = 1 / 60) {
+    const rate = dt > 1e-6 ? 1 / dt : 60;
+    for (const [axis, value] of [
+      ['spin', this.trickSpin], ['flip', this.trickFlip], ['roll', this.trickRoll],
+    ]) {
+      const s = this.trickSettle[axis];
+      s.value = wrapAngle(value);
+      s.velocity = (value - this._trickPrev[axis]) * rate;
+      this._trickPrev[axis] = value;
+    }
+    this.trickSpin = this.trickSettle.spin.value;
+    this.trickFlip = this.trickSettle.flip.value;
+    this.trickRoll = this.trickSettle.roll.value;
+  }
+
+  /** Step the settle spring one frame. The only writer outside a trick. */
+  _stepSettle(dt) {
+    this.trickSpin = spring(this.trickSettle.spin, 0, 120, 21, dt);
+    this.trickFlip = spring(this.trickSettle.flip, 0, 120, 21, dt);
+    this.trickRoll = spring(this.trickSettle.roll, 0, 120, 21, dt);
+  }
+
   /** Cash a trick in early: keeps what you completed and saves the landing. */
   _abortTrick() {
     if (!this.trick) return;
     const progress = clamp(1 - this.trickTimer / this.trickDuration, 0, 1);
     const trick = this.trick;
     this.trick = null;
-    this.trickSpin = 0;
-    this.trickFlip = 0;
-    this.trickRoll = 0;
+    this.trickPoseNext = null;
+    this.trickPoseMix = 0;
+    this._settleRotation();
     this.events.emit('player:trick:complete', {
       player: this, trick, progress: progress * this.C.trickAbortPayout, aborted: true,
     });
@@ -803,9 +833,10 @@ export class Player {
       this.trickPoseNext = this.grindTrick.pose;
       this.trickPoseMix = 0;
       this.trickPoseWeight = damp(this.trickPoseWeight, 1, 9, dt);
-      this.trickSpin = damp(this.trickSpin, 0, 12, dt);
-      this.trickFlip = damp(this.trickFlip, 0, 12, dt);
-      this.trickRoll = damp(this.trickRoll, 0, 12, dt);
+      // Through the same spring as everywhere else. Damping the live values
+      // here left the spring holding the pre-grind residual, and leaving the
+      // rail re-assigned from it -- yawing the rig half a turn in one frame.
+      this._stepSettle(dt);
       return;
     }
     if (this.state === PSTATE.WALLRIDE) {
@@ -813,19 +844,17 @@ export class Player {
       this.trickPoseNext = this.trickPose;
       this.trickPoseMix = 0;
       this.trickPoseWeight = damp(this.trickPoseWeight, 1, 10, dt);
+      this._stepSettle(dt);
       return;
     }
 
     if (!this.trick) {
       this.trickPoseWeight = damp(this.trickPoseWeight, 0, 11, dt);
       if (this.trickPoseWeight < 0.02) { this.trickPose = null; this.trickPoseNext = null; }
-      // Settle on a spring that already carries the speed the trick ended at,
-      // so the body decelerates through the last of the turn instead of
-      // stopping dead and starting back the other way.
-      const settle = this.trickSettle;
-      this.trickSpin = spring(settle.spin, 0, 120, 21, dt);
-      this.trickFlip = spring(settle.flip, 0, 120, 21, dt);
-      this.trickRoll = spring(settle.roll, 0, 120, 21, dt);
+      // The spring already carries the speed the trick ended at, so the body
+      // decelerates through the last of the turn instead of stopping dead and
+      // starting back the other way.
+      this._stepSettle(dt);
       return;
     }
 
@@ -880,20 +909,9 @@ export class Player {
       this.trick = null;
       this.trickPoseNext = null;
       this.trickPoseMix = 0;
-      // Take the whole turns out and leave the remainder. Zeroing outright
-      // snapped a half-turn trick 180 degrees in one frame; leaving it whole
-      // made a 1080 unwind three full turns backwards. What is left is the
-      // part that is actually visible, handed to the settle spring along with
-      // the speed the body was turning at on its last frame.
-      const rate = dt > 1e-6 ? 1 / dt : 60;
-      for (const [axis, value] of [['spin', this.trickSpin], ['flip', this.trickFlip], ['roll', this.trickRoll]]) {
-        const s = this.trickSettle[axis];
-        s.value = wrapAngle(value);
-        s.velocity = (value - this._trickPrev[axis]) * rate;
-      }
-      this.trickSpin = this.trickSettle.spin.value;
-      this.trickFlip = this.trickSettle.flip.value;
-      this.trickRoll = this.trickSettle.roll.value;
+      // Zeroing outright snapped a half-turn trick 180 degrees in one frame;
+      // leaving it whole made a 1080 unwind three full turns backwards.
+      this._settleRotation(dt);
     }
   }
 
