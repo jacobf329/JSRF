@@ -280,6 +280,7 @@ const travel = await page.evaluate(async () => {
     p.trickSpin = 0; p.trickFlip = 0; p.trickRoll = 0;
     p.trickCarry = { spin: 0, flip: 0, roll: 0 };
     for (const a of ['spin', 'flip', 'roll']) { p.trickSettle[a].value = 0; p.trickSettle[a].velocity = 0; }
+    p._trickVel = { spin: 0, flip: 0, roll: 0 };
   };
 
   // One trick, then enough idle frames for the settle to run out.
@@ -328,22 +329,16 @@ const travel = await page.evaluate(async () => {
     measure(t, Math.PI * 0.9);
   }
 
-  // Aborting mid-trick and wiping out are both exits the completion path does
-  // not cover, and both used to zero the rotation outright.
+  // Every other way out of a trick. The completion path is only one of them,
+  // and each of these used to zero or freeze the rotation instead of handing
+  // it over -- which is a snap of up to 270 degrees in a single frame.
   const exitJumps = {};
-  for (const [name, exit] of [
-    ['abort', () => p._abortTrick()],
-    ['bail', () => p._bail('TEST')],
-  ]) {
+  const spin540 = all.find((x) => x.id === 'spin540');
+
+  const afterExit = (setup, exit, frames = 30) => {
     reset();
-    const t = all.find((x) => x.id === 'spin540');
-    p.trick = t;
-    p.trickDuration = t.duration;
-    p.trickTimer = t.duration;
-    // Same relative property as a completed trick: carrying on at the speed
-    // it was already turning is continuous, not a snap. The threshold has to
-    // be the trick's own rate, because it is aborted at its fastest.
     let during = 0;
+    setup();
     let prev = [p.trickSpin, p.trickFlip, p.trickRoll];
     for (let i = 0; i < 24; i++) {
       p._updateTrickAnimation(1 / 60);
@@ -351,19 +346,50 @@ const travel = await page.evaluate(async () => {
       for (let k = 0; k < 3; k++) during = Math.max(during, Math.abs(wrap(now[k] - prev[k])));
       prev = now;
     }
-    const before = [p.trickSpin, p.trickFlip, p.trickRoll];
     exit();
-    p.state = 'air';
     let after = 0;
-    let last = before;
-    for (let i = 0; i < 30; i++) {
+    let last = [p.trickSpin, p.trickFlip, p.trickRoll];
+    for (let i = 0; i < frames; i++) {
       p._updateTrickAnimation(1 / 60);
       const now = [p.trickSpin, p.trickFlip, p.trickRoll];
       for (let k = 0; k < 3; k++) after = Math.max(after, Math.abs(wrap(now[k] - last[k])));
       last = now;
     }
-    exitJumps[name] = { during: +during.toFixed(3), after: +after.toFixed(3), ratio: +(after / Math.max(during, 0.2)).toFixed(3) };
-  }
+    // Relative, not absolute: a trick aborted at its fastest carries on at the
+    // speed it was already turning, and that is continuous, not a snap.
+    return { during: +during.toFixed(3), after: +after.toFixed(3), ratio: +(after / Math.max(during, 0.2)).toFixed(3) };
+  };
+
+  const throwTrick = () => {
+    p.trick = spin540;
+    p.trickDuration = spin540.duration;
+    p.trickTimer = spin540.duration;
+  };
+
+  exitJumps.abort = afterExit(throwTrick, () => { p.state = 'air'; p._abortTrick(); });
+  exitJumps.bail = afterExit(throwTrick, () => p._bail('TEST'));
+  exitJumps.respawn = afterExit(throwTrick, () => { p.respawn(); p.state = 'air'; p.grounded = false; });
+
+  // Catching a rail or a wall mid-trick: neither goes through completion.
+  exitJumps.railCatch = afterExit(throwTrick, () => {
+    p.state = 'grind';
+    p.grindTrick = T.pickGrindTrick(0, 0, 0);
+  });
+  exitJumps.wallCatch = afterExit(throwTrick, () => {
+    p.state = 'wallride';
+    p.wallTrick = T.WALL_TRICKS[0];
+  });
+
+  // And the one that the live-trick check could never reach: bailing out of a
+  // grind long after a trick finished, where the hand-off state is stale.
+  exitJumps.staleBail = afterExit(
+    () => { throwTrick(); },
+    () => {
+      p.state = 'air';
+      for (let i = 0; i < 90; i++) p._updateTrickAnimation(1 / 60);   // let it settle
+      p._bail('LOST THE RAIL');
+    },
+  );
 
   // --- no pose channel may latch.
   //
@@ -493,8 +519,9 @@ const ok = {
   // than it did during it. Measured alone and mid-unwind from a previous one.
   rotationNeverSnapsAfterATrick: travel.offenders.length === 0,
   // Pressing B to cash out, and wiping out, are exits of their own.
-  abortDoesNotSnap: travel.exitJumps.abort.ratio <= 1,
-  bailDoesNotSnap: travel.exitJumps.bail.ratio <= 1,
+  // Abort, wipeout, respawn, rail catch, wall catch, and a bail long after
+  // the trick already settled -- every exit that is not the completion path.
+  noExitFromATrickSnaps: Object.values(travel.exitJumps).every((e) => e.ratio <= 1),
   everyPoseChannelIsApplied: travel.channels.every((c) => c.applied),
   everyPoseChannelReturnsToRest: travel.channels.every((c) => c.returned),
   noPoseUsesAnUnknownChannel: travel.strays.length === 0,

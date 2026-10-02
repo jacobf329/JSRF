@@ -129,7 +129,11 @@ export class Player {
       flip: { value: 0, velocity: 0 },
       roll: { value: 0, velocity: 0 },
     };
-    this._trickPrev = { spin: 0, flip: 0, roll: 0 };
+    // The rotation's current angular velocity, maintained every frame whatever
+    // the state. Deriving it on demand from a remembered previous value only
+    // worked while a trick was live: once the spring had settled, the stale
+    // value made a handover seed hundreds of radians a second.
+    this._trickVel = { spin: 0, flip: 0, roll: 0 };
     this.grindVariant = 0;
     this.grindDirection = 'neutral';
     this.airTricks = 0;
@@ -536,16 +540,13 @@ export class Player {
    * holding. Whole turns come out here because they are invisible: unwinding
    * them would spin the body all the way back round.
    */
-  _settleRotation(dt = 1 / 60) {
-    const rate = dt > 1e-6 ? 1 / dt : 60;
-    for (const [axis, value] of [
-      ['spin', this.trickSpin], ['flip', this.trickFlip], ['roll', this.trickRoll],
-    ]) {
-      const s = this.trickSettle[axis];
-      s.value = wrapAngle(value);
-      s.velocity = (value - this._trickPrev[axis]) * rate;
-      this._trickPrev[axis] = value;
-    }
+  _settleRotation() {
+    this.trickSettle.spin.value = wrapAngle(this.trickSpin);
+    this.trickSettle.flip.value = wrapAngle(this.trickFlip);
+    this.trickSettle.roll.value = wrapAngle(this.trickRoll);
+    this.trickSettle.spin.velocity = this._trickVel.spin;
+    this.trickSettle.flip.velocity = this._trickVel.flip;
+    this.trickSettle.roll.velocity = this._trickVel.roll;
     this.trickSpin = this.trickSettle.spin.value;
     this.trickFlip = this.trickSettle.flip.value;
     this.trickRoll = this.trickSettle.roll.value;
@@ -825,10 +826,32 @@ export class Player {
     this.events.emit('player:trick', { player: this, trick, index: this.airTricks });
   }
 
+  /**
+   * Advance the trick animation and keep the rotation's velocity current.
+   *
+   * The velocity is measured here, around every branch, because any of them
+   * can be the last frame before something hands the rotation to the settle
+   * spring -- and the spring needs the speed the body was actually turning at.
+   */
   _updateTrickAnimation(dt) {
+    const sp = this.trickSpin;
+    const fl = this.trickFlip;
+    const ro = this.trickRoll;
+    this._trickAnimation(dt);
+    const rate = dt > 1e-6 ? 1 / dt : 60;
+    this._trickVel.spin = wrapAngle(this.trickSpin - sp) * rate;
+    this._trickVel.flip = wrapAngle(this.trickFlip - fl) * rate;
+    this._trickVel.roll = wrapAngle(this.trickRoll - ro) * rate;
+  }
+
+  _trickAnimation(dt) {
     // Grinds and wall rides hold their stance for as long as they last, rather
     // than playing out over a fixed duration.
     if (this.state === PSTATE.GRIND && this.grindTrick) {
+      // A rail caught mid-trick ends it. Latching does not go through the
+      // completion path, so without this the spring would still be holding
+      // whatever it had before the trick and leaving the rail would snap.
+      if (this.trick) { this.trick = null; this._settleRotation(); }
       this.trickPose = this.grindTrick.pose;
       this.trickPoseNext = this.grindTrick.pose;
       this.trickPoseMix = 0;
@@ -840,6 +863,7 @@ export class Player {
       return;
     }
     if (this.state === PSTATE.WALLRIDE) {
+      if (this.trick) { this.trick = null; this._settleRotation(); }
       this.trickPose = this.wallTrick ? this.wallTrick.pose : 'wallride';
       this.trickPoseNext = this.trickPose;
       this.trickPoseMix = 0;
@@ -873,10 +897,6 @@ export class Player {
     carry.spin = damp(carry.spin, 0, 9, dt);
     carry.flip = damp(carry.flip, 0, 9, dt);
     carry.roll = damp(carry.roll, 0, 9, dt);
-    const prev = this._trickPrev;
-    prev.spin = this.trickSpin;
-    prev.flip = this.trickFlip;
-    prev.roll = this.trickRoll;
     this.trickSpin = trick.spin * turn + trick.swingY * swing + carry.spin;
     this.trickFlip = trick.flip * turn + trick.swingX * swing + carry.flip;
     this.trickRoll = trick.roll * turn + trick.swingZ * swing + carry.roll;
@@ -911,7 +931,7 @@ export class Player {
       this.trickPoseMix = 0;
       // Zeroing outright snapped a half-turn trick 180 degrees in one frame;
       // leaving it whole made a 1080 unwind three full turns backwards.
-      this._settleRotation(dt);
+      this._settleRotation();
     }
   }
 
@@ -967,6 +987,11 @@ export class Player {
     this.velocity.set(0, 0, 0);
     this.rail = null;
     this.trick = null;
+    // Dropping out of the world mid-spin is an exit too.
+    this._trickVel.spin = 0;
+    this._trickVel.flip = 0;
+    this._trickVel.roll = 0;
+    this._settleRotation();
     this.boost = this.C.boostMax;
     this.invulnerable = 1.5;
     this.setState(PSTATE.AIR);
