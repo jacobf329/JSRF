@@ -3,6 +3,7 @@
 // city with nothing in the way. Writes scratch/rudie/*.png.
 //
 //   node tools/view-rudie.mjs [skinIndex] [poseName]
+//   node tools/view-rudie.mjs 0 trick:mctwist      -- a strip through one move
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
 import fs from 'node:fs';
@@ -63,7 +64,10 @@ const info = await page.evaluate(async (opts) => {
     index: 0, time: 0, state: 'skate',
     groundSpeed: 0, speed: 0, visualHeading: 0, lean: 0, grounded: true,
     trickFlip: 0, trickSpin: 0, trickRoll: 0,
-    trickPose: opts.pose, trickPoseWeight: opts.pose ? 1 : 0,
+    trickPose: opts.pose && !opts.pose.startsWith('trick:') ? opts.pose : null,
+    trickPoseNext: null,
+    trickPoseMix: 0,
+    trickPoseWeight: opts.pose && !opts.pose.startsWith('trick:') ? 1 : 0,
     invulnerable: 0,
   };
   for (let i = 0; i < 40; i++) model.update(1 / 60, window.__fake);
@@ -81,6 +85,62 @@ const info = await page.evaluate(async (opts) => {
 }, { skin, pose });
 
 fs.mkdirSync('scratch/rudie', { recursive: true });
+
+// `trick:<id>` renders the move as a filmstrip instead of four static angles,
+// which is the only way to tell whether a pose sequence actually travels.
+if (pose && pose.startsWith('trick:')) {
+  const id = pose.slice(6);
+  const frames = 8;
+  for (let i = 0; i < frames; i++) {
+    await page.evaluate(async (o) => {
+      const g = window.__jsrf;
+      const T = await import('/src/player/Tricks.js');
+      const trick = T.allTricks().find((t) => t.id === o.id);
+      if (!trick) throw new Error(`no trick "${o.id}"`);
+      const p = g.slots[0].player;
+      const m = window.__model;
+      const fake = window.__fake;
+
+      // Re-run the move from the start each frame and stop at the sample
+      // point, so every frame is reached the same way.
+      p.state = 'air';
+      p.grounded = false;
+      p.trick = trick;
+      p.trickDuration = trick.duration || 0.5;
+      p.trickTimer = p.trickDuration;
+      p.trickPoseWeight = 0;
+      const steps = Math.max(1, Math.round(48 * o.t));
+      for (let k = 0; k < steps; k++) {
+        p._updateTrickAnimation(p.trickDuration / 48);
+        if (!p.trick) break;
+      }
+      Object.assign(fake, {
+        state: 'air', grounded: false,
+        trickFlip: p.trickFlip, trickSpin: p.trickSpin, trickRoll: p.trickRoll,
+        trickPose: p.trickPose, trickPoseNext: p.trickPoseNext,
+        trickPoseMix: p.trickPoseMix, trickPoseWeight: p.trickPoseWeight,
+      });
+      m.update(1 / 60, fake);
+      // Lift the rig clear of the floor: a move that goes inverted rotates
+      // about the feet, so on the ground half of it ends up underneath.
+      m.root.position.set(0, 1.5, 0);
+
+      const cam = g.slots[0].camera;
+      cam.position.set(0, 2.4, 7.0);
+      cam.lookAt(0, 2.0, 0);
+      cam.fov = 30;
+      cam.updateProjectionMatrix();
+      cam.updateMatrixWorld();
+    }, { id, t: (i + 0.5) / frames });
+    await page.waitForTimeout(380);
+    await page.screenshot({ path: `scratch/rudie/${id}-${i}.png` });
+  }
+  console.log(JSON.stringify({ ...info, filmstrip: id, frames }));
+  await browser.close();
+  await server.close();
+  process.exit(0);
+}
+
 const SHOTS = [
   // The rig faces +Z at heading 0, so the camera at a = 0 is looking at it.
   { name: 'front', a: 0 },

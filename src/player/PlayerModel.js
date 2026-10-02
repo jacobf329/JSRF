@@ -210,38 +210,67 @@ export class PlayerModel {
   }
 
 /** Lerp the current joint rotations toward a named pose by `weight`. */
-  _overlayPose(name, weight) {
-    if (!name || weight <= 0.001) return;
-    const pose = POSES[name];
-    if (!pose) return;
+  /**
+   * Lerp the rig toward a pose, or toward a blend of two.
+   *
+   * Tricks name a sequence of poses rather than one, so most of the time this
+   * is asked for a point between two of them. Blending has to respect that a
+   * pose is sparse: a channel only one of the pair mentions must blend toward
+   * the live joint value for the other half, or a grab that only moves the
+   * arms would yank the legs to zero on the way through.
+   */
+  _overlayPose(nameA, nameB, mix, weight) {
+    if (weight <= 0.001) return;
+    const a = nameA ? POSES[nameA] : null;
+    const b = nameB ? POSES[nameB] : null;
+    if (!a && !b) return;
+
     const w = Math.min(1, weight);
-    const to = (obj, axis, value) => {
-      if (value === undefined) return;
-      obj.rotation[axis] += (value - obj.rotation[axis]) * w;
+    const m = clamp(mix || 0, 0, 1);
+
+    // The channel's target, given that either side may not mention it.
+    const blend = (key, current) => {
+      const va = a && a[key] !== undefined ? a[key] : undefined;
+      const vb = b && b[key] !== undefined ? b[key] : undefined;
+      if (va === undefined && vb === undefined) return undefined;
+      return (va === undefined ? current : va) * (1 - m) + (vb === undefined ? current : vb) * m;
     };
 
-    if (pose.hips !== undefined) {
-      this.hips.position.y += ((0.92 - pose.hips) - this.hips.position.y) * w;
+    const to = (obj, axis, key) => {
+      const target = blend(key, obj.rotation[axis]);
+      if (target === undefined) return;
+      obj.rotation[axis] += (target - obj.rotation[axis]) * w;
+    };
+
+    const hips = blend('hips', 0.92 - this.hips.position.y);
+    if (hips !== undefined) {
+      this.hips.position.y += ((0.92 - hips) - this.hips.position.y) * w;
     }
-    to(this.body, 'x', pose.spineX);
-    to(this.body, 'z', pose.spineZ);
-    to(this.neck, 'x', pose.neckX);
+    to(this.body, 'x', 'spineX');
+    to(this.body, 'y', 'spineY');
+    to(this.body, 'z', 'spineZ');
+    to(this.neck, 'x', 'neckX');
+    to(this.neck, 'y', 'neckY');
 
-    to(this.armL.upper, 'x', pose.armLX);
-    to(this.armL.upper, 'z', pose.armLZ);
-    to(this.armL.lower, 'x', pose.armLLower);
-    to(this.armR.upper, 'x', pose.armRX);
-    to(this.armR.upper, 'z', pose.armRZ);
-    to(this.armR.lower, 'x', pose.armRLower);
+    to(this.armL.upper, 'x', 'armLX');
+    to(this.armL.upper, 'y', 'armLY');
+    to(this.armL.upper, 'z', 'armLZ');
+    to(this.armL.lower, 'x', 'armLLower');
+    to(this.armR.upper, 'x', 'armRX');
+    to(this.armR.upper, 'y', 'armRY');
+    to(this.armR.upper, 'z', 'armRZ');
+    to(this.armR.lower, 'x', 'armRLower');
 
-    to(this.legL.thigh, 'x', pose.legLThighX);
-    to(this.legL.thigh, 'z', pose.legLThighZ);
-    to(this.legL.shin, 'x', pose.legLShin);
-    to(this.legL.foot, 'x', pose.legLFoot);
-    to(this.legR.thigh, 'x', pose.legRThighX);
-    to(this.legR.thigh, 'z', pose.legRThighZ);
-    to(this.legR.shin, 'x', pose.legRShin);
-    to(this.legR.foot, 'x', pose.legRFoot);
+    to(this.legL.thigh, 'x', 'legLThighX');
+    to(this.legL.thigh, 'y', 'legLThighY');
+    to(this.legL.thigh, 'z', 'legLThighZ');
+    to(this.legL.shin, 'x', 'legLShin');
+    to(this.legL.foot, 'x', 'legLFoot');
+    to(this.legR.thigh, 'x', 'legRThighX');
+    to(this.legR.thigh, 'y', 'legRThighY');
+    to(this.legR.thigh, 'z', 'legRThighZ');
+    to(this.legR.shin, 'x', 'legRShin');
+    to(this.legR.foot, 'x', 'legRFoot');
   }
 
   _arm(side, JACKET, SKIN) {
@@ -501,7 +530,7 @@ export class PlayerModel {
     // animation just produced. Blending after the fact rather than folding the
     // pose into every expression above keeps the two independent: a grab can
     // reshape the arms without flattening the skating stride underneath it.
-    this._overlayPose(player.trickPose, player.trickPoseWeight);
+    this._overlayPose(player.trickPose, player.trickPoseNext, player.trickPoseMix, player.trickPoseWeight);
 
     // Blink the whole rudie while invulnerable. The phase is offset per player
     // so a split-screen respawn does not make everyone vanish at once.

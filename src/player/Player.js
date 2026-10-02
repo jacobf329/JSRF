@@ -3,7 +3,7 @@ import { skaterConfigFor, traitsFor, DEFAULT_RUDIE } from './Rudies.js';
 import { SURFACE } from '../world/Collision.js';
 import { RAIL_TYPE } from '../world/Rail.js';
 import { clamp, dampAngle, damp } from '../core/MathUtils.js';
-import { pickAirTrick, pickGrindTrick, pickWallTrick, directionFromInput } from './Tricks.js';
+import { pickAirTrick, pickGrindTrick, pickWallTrick, directionFromInput, curveFor, arc } from './Tricks.js';
 
 export const PSTATE = {
   SKATE: 'skate',
@@ -15,11 +15,6 @@ export const PSTATE = {
   BAIL: 'bail',
 };
 
-
-/** Ease-out so a spin whips round early and settles, rather than crawling. */
-function ease(t) {
-  return 1 - Math.pow(1 - t, 2.2);
-}
 
 const _up = new THREE.Vector3(0, 1, 0);
 const _fwd = new THREE.Vector3();
@@ -109,8 +104,12 @@ export class Player {
     this.trickSpin = 0;
     this.trickFlip = 0;
     this.trickRoll = 0;
-    // What the rig should be shaped like right now, and how strongly.
+    // What the rig should be shaped like right now, and how strongly. Tricks
+    // play through a sequence of poses, so the rig is told which two it is
+    // between and how far along.
     this.trickPose = null;
+    this.trickPoseNext = null;
+    this.trickPoseMix = 0;
     this.trickPoseWeight = 0;
     this.grindVariant = 0;
     this.grindDirection = 'neutral';
@@ -478,6 +477,8 @@ export class Player {
     if (this.state === PSTATE.BAIL) return;
     this.trick = null;
     this.trickPose = null;
+    this.trickPoseNext = null;
+    this.trickPoseMix = 0;
     this.trickPoseWeight = 0;
     this.rail = null;
     this.airTime = 0;
@@ -766,6 +767,8 @@ export class Player {
     // than playing out over a fixed duration.
     if (this.state === PSTATE.GRIND && this.grindTrick) {
       this.trickPose = this.grindTrick.pose;
+      this.trickPoseNext = this.grindTrick.pose;
+      this.trickPoseMix = 0;
       this.trickPoseWeight = damp(this.trickPoseWeight, 1, 9, dt);
       this.trickSpin = damp(this.trickSpin, 0, 12, dt);
       this.trickFlip = damp(this.trickFlip, 0, 12, dt);
@@ -774,13 +777,15 @@ export class Player {
     }
     if (this.state === PSTATE.WALLRIDE) {
       this.trickPose = this.wallTrick ? this.wallTrick.pose : 'wallride';
+      this.trickPoseNext = this.trickPose;
+      this.trickPoseMix = 0;
       this.trickPoseWeight = damp(this.trickPoseWeight, 1, 10, dt);
       return;
     }
 
     if (!this.trick) {
       this.trickPoseWeight = damp(this.trickPoseWeight, 0, 11, dt);
-      if (this.trickPoseWeight < 0.02) this.trickPose = null;
+      if (this.trickPoseWeight < 0.02) { this.trickPose = null; this.trickPoseNext = null; }
       this.trickSpin = damp(this.trickSpin, 0, 10, dt);
       this.trickFlip = damp(this.trickFlip, 0, 10, dt);
       this.trickRoll = damp(this.trickRoll, 0, 10, dt);
@@ -788,16 +793,34 @@ export class Player {
     }
 
     this.trickTimer -= dt;
+    const trick = this.trick;
     const t = 1 - clamp(this.trickTimer / this.trickDuration, 0, 1);
-    const turn = Math.PI * 2 * ease(t);
-    this.trickSpin = this.trick.spin * turn;
-    this.trickFlip = this.trick.flip * turn;
-    this.trickRoll = this.trick.roll * turn;
 
-    // Snap into the shape, hold it, then release -- a grab that eases in and
-    // out over its whole duration never actually looks like the pose.
-    this.trickPose = this.trick.pose;
-    this.trickPoseWeight = clamp(Math.min(t / 0.16, (1 - t) / 0.24), 0, 1);
+    // Net rotation: whole turns, spread across the duration by the trick's own
+    // curve so a heavy flip winds up and a late shove-it snaps at the end.
+    const turn = Math.PI * 2 * curveFor(trick.curve)(t);
+    // Swing: amplitude that goes out and comes back. This is what makes a move
+    // read as thrown rather than rotated -- the body leaves its axis, reaches,
+    // and is hauled back in time to land.
+    const swing = arc(t);
+    this.trickSpin = trick.spin * turn + trick.swingY * swing;
+    this.trickFlip = trick.flip * turn + trick.swingX * swing;
+    this.trickRoll = trick.roll * turn + trick.swingZ * swing;
+
+    // Walk the pose sequence. Snap in, travel through the shapes, release --
+    // a grab that eases in and out over its whole duration never actually
+    // looks like the pose, and one that holds a single shape never moves.
+    const keys = trick.keys;
+    const span = keys.length - 1;
+    const at = clamp(t, 0, 1) * span;
+    const i = Math.min(Math.floor(at), Math.max(0, span - 1));
+    this.trickPose = keys[i];
+    this.trickPoseNext = keys[Math.min(i + 1, span)];
+    const local = span > 0 ? at - i : 0;
+    // Smoothstep between keys so the body arrives at each shape rather than
+    // sliding past it at a constant rate.
+    this.trickPoseMix = local * local * (3 - 2 * local);
+    this.trickPoseWeight = clamp(Math.min(t / 0.14, (1 - t) / 0.22), 0, 1);
 
     if (this.trickTimer <= 0) {
       // Points land when the trick does, not when it starts -- otherwise a
@@ -809,6 +832,8 @@ export class Player {
       this.trickSpin = 0;
       this.trickFlip = 0;
       this.trickRoll = 0;
+      this.trickPoseNext = null;
+      this.trickPoseMix = 0;
     }
   }
 
