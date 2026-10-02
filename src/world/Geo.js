@@ -21,6 +21,72 @@ export function pillarGeo(w, h, d) {
   return g;
 }
 
+/**
+ * A building shell with its vertical corners cut off.
+ *
+ * A city of plain cuboids reads as a city of cuboids no matter how it is
+ * coloured, because every corner is the same ninety degrees and the cel ramp
+ * gives each face one flat tone. A chamfer costs eight triangles and gives
+ * every tower a third tone down its corners plus an ink line that steps rather
+ * than turning square -- which is the difference between a block and a
+ * building. The faces stay flat and vertical, so wallriding and the tag
+ * decals that sit on them are unaffected.
+ */
+export function towerGeo(w, h, d, chamfer = 0) {
+  const c = Math.min(chamfer, w * 0.22, d * 0.22);
+  if (c <= 0.01) return pillarGeo(w, h, d);
+
+  const hw = w / 2;
+  const hd = d / 2;
+  const shape = new THREE.Shape();
+  shape.moveTo(-hw + c, -hd);
+  shape.lineTo(hw - c, -hd);
+  shape.lineTo(hw, -hd + c);
+  shape.lineTo(hw, hd - c);
+  shape.lineTo(hw - c, hd);
+  shape.lineTo(-hw + c, hd);
+  shape.lineTo(-hw, hd - c);
+  shape.lineTo(-hw, -hd + c);
+  shape.closePath();
+
+  const g = new THREE.ExtrudeGeometry(shape, { depth: h, bevelEnabled: false, steps: 1 });
+  // Extrude runs along +Z; stand it up and sit it on the ground.
+  g.rotateX(-Math.PI / 2);
+  g.translate(0, h, 0);
+  g.computeVertexNormals();
+  return g;
+}
+
+/** A slab with rolled long edges: awnings, kerbs, parapet caps. */
+export function slabGeo(w, h, d, radius = 0.08) {
+  const r = Math.min(radius, h / 2 - 1e-3, d / 2 - 1e-3);
+  const shape = new THREE.Shape();
+  const hh = h / 2 - r;
+  const hd = d / 2;
+  shape.moveTo(-hd + r, -h / 2);
+  shape.lineTo(hd - r, -h / 2);
+  shape.quadraticCurveTo(hd, -h / 2, hd, -hh);
+  shape.lineTo(hd, hh);
+  shape.quadraticCurveTo(hd, h / 2, hd - r, h / 2);
+  shape.lineTo(-hd + r, h / 2);
+  shape.quadraticCurveTo(-hd, h / 2, -hd, hh);
+  shape.lineTo(-hd, -hh);
+  shape.quadraticCurveTo(-hd, -h / 2, -hd + r, -h / 2);
+
+  const g = new THREE.ExtrudeGeometry(shape, { depth: w, bevelEnabled: false, steps: 1, curveSegments: 2 });
+  g.rotateY(Math.PI / 2);
+  g.translate(-w / 2, 0, 0);
+  g.computeVertexNormals();
+  return g;
+}
+
+/** A shallow dome, for water tanks and vents. */
+export function domeGeo(radius, height, seg = 10) {
+  const g = new THREE.SphereGeometry(radius, seg, Math.max(4, seg >> 1), 0, Math.PI * 2, 0, Math.PI / 2);
+  g.scale(1, height / radius, 1);
+  return g;
+}
+
 export function cylGeo(radiusTop, radiusBottom, height, segments = 12, openEnded = false) {
   const g = new THREE.CylinderGeometry(radiusTop, radiusBottom, height, segments, 1, openEnded);
   g.translate(0, height / 2, 0);

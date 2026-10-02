@@ -6,10 +6,10 @@ import { CollisionWorld, SURFACE } from './Collision.js';
 import { RailNetwork, Rail, RAIL_TYPE } from './Rail.js';
 import { BUILDINGS, CAN_SPOTS, DISTRICTS, LEVEL, POLICE_POSTS, TAG_SPOTS, districtAt } from './LevelData.js';
 import {
-  bankGeo, boxGeo, cylGeo, pillarGeo, quarterPipeGeo, sphereGeo,
-  stairsGeo, textureCanvas, tubeGeo, wedgeGeo,
+  bankGeo, boxGeo, cylGeo, domeGeo, pillarGeo, quarterPipeGeo, slabGeo,
+  sphereGeo, stairsGeo, textureCanvas, towerGeo, tubeGeo, wedgeGeo,
 } from './Geo.js';
-import { makeRng } from '../core/MathUtils.js';
+import { makeRng, clamp } from '../core/MathUtils.js';
 
 const HALF = LEVEL.bounds;
 
@@ -67,6 +67,7 @@ export class Level {
     this._drain();
     this.b.setChunk('bantam');
     this._bantam();
+    this._streetProps();
     this._railNetwork();
 
     const baked = this.b.finish('district', this.collision);
@@ -242,11 +243,18 @@ export class Level {
     const body = toon(color);
     const trim = toon(PALETTE.rooftop);
 
-    this.b.add(pillarGeo(w, h, d), body, {
+    // Corners are cut, in proportion to the building: a kiosk gets a hint, a
+    // tower gets a real chamfer. The faces stay flat and vertical, so the tag
+    // walls and the wallriding they carry are untouched.
+    const chamfer = clamp(Math.min(w, d) * 0.1, 0.35, 2.2);
+    this.b.add(towerGeo(w, h, d, chamfer), body, {
       transform: { x, y: 0, z }, surface: SURFACE.WALL,
     });
 
-    // Roof parapet -- four low walls that also read as a grindable edge.
+    // Roof parapet -- four low walls that also read as a grindable edge. These
+    // stay plain boxes: they are thin trim seen edge-on from the street, so a
+    // rolled edge is invisible, and there are four of them on every building
+    // feeding the collision soup that every capsule step has to walk.
     const pt = 0.55;
     const ph = 0.9;
     this.b.add(pillarGeo(w, ph, pt), trim, { transform: { x, y: h, z: z - d / 2 + pt / 2 } });
@@ -254,16 +262,26 @@ export class Level {
     this.b.add(pillarGeo(pt, ph, d - pt * 2), trim, { transform: { x: x - w / 2 + pt / 2, y: h, z } });
     this.b.add(pillarGeo(pt, ph, d - pt * 2), trim, { transform: { x: x + w / 2 - pt / 2, y: h, z } });
 
-    // Rooftop clutter.
+    // Rooftop clutter: a plant room, a water tank on legs, a vent stack.
     if (style !== 'low') {
-      this.b.add(pillarGeo(4, 2.6, 3.2), toon(PALETTE.steel), {
+      const steel = toon(PALETTE.steel);
+      this.b.add(towerGeo(4, 2.6, 3.2, 0.5), steel, {
         transform: { x: x + w * 0.22, y: h + ph, z: z - d * 0.2 }, surface: SURFACE.METAL,
       });
-      this.b.add(cylGeo(1.1, 1.1, 2.2, 10), toon(PALETTE.steel), {
+      this.b.add(domeGeo(2.1, 1.1, 10), steel, {
+        transform: { x: x + w * 0.22, y: h + ph + 2.6, z: z - d * 0.2 }, collide: false,
+      });
+      this.b.add(cylGeo(1.1, 1.3, 2.4, 10), steel, {
         transform: { x: x - w * 0.26, y: h + ph, z: z + d * 0.22 }, surface: SURFACE.METAL,
       });
-      this.b.add(cylGeo(0.16, 0.16, 7, 6), toon(PALETTE.steel), {
+      this.b.add(domeGeo(1.15, 0.7, 10), toon(PALETTE.bloodOrange), {
+        transform: { x: x - w * 0.26, y: h + ph + 2.4, z: z + d * 0.22 }, collide: false,
+      });
+      this.b.add(cylGeo(0.16, 0.16, 7, 6), steel, {
         transform: { x: x - w * 0.3, y: h + ph, z: z - d * 0.3 }, collide: false,
+      });
+      this.b.add(domeGeo(0.34, 0.34, 8), steel, {
+        transform: { x: x - w * 0.3, y: h + ph + 7, z: z - d * 0.3 }, collide: false,
       });
     }
 
@@ -293,7 +311,7 @@ export class Level {
       // Sun canopy, kept high enough to leave the tag walls clear.
       const awningMat = toon(PALETTE.bloodOrange, { steps: 2 });
       for (const oz of [d / 2 + 0.6, -d / 2 - 0.6]) {
-        this.b.add(boxGeo(w * 0.86, 0.16, 1.2), awningMat, {
+        this.b.add(slabGeo(w * 0.86, 0.22, 1.2, 0.1), awningMat, {
           transform: { x, y: 6.6, z: z + oz, rx: oz > 0 ? -0.24 : 0.24 },
           collide: false,
         });
@@ -301,6 +319,140 @@ export class Level {
     }
 
     if (sign) this._sign(spec, sign);
+  }
+
+  /**
+   * Street furniture along the pavements.
+   *
+   * The thing that stops a district reading as a grid of cuboids is not the
+   * buildings, it is whether there is anything at eye level between them. Each
+   * prop is placed off a known building face and offset outward, then tested
+   * against every other footprint, so nothing can end up buried in a wall --
+   * which a scatter over open ground could not promise, because the collision
+   * soup it would have to query does not exist yet at this point in the build.
+   */
+  _streetProps() {
+    const rng = makeRng(0x5747);
+    const steel = toon(PALETTE.steel);
+    const ink = toon(PALETTE.deepBlue);
+    const lamp = flat(PALETTE.sunYellow);
+    const leaf = toon(PALETTE.foliage);
+    const leafDark = toon(PALETTE.foliageDark);
+
+    // Is this spot clear of every building footprint, with room to stand?
+    const clear = (px, pz, radius) => {
+      for (const b of BUILDINGS) {
+        if (Math.abs(px - b.x) < b.w / 2 + radius && Math.abs(pz - b.z) < b.d / 2 + radius) return false;
+      }
+      return Math.abs(px) < LEVEL.bounds - 6 && Math.abs(pz) < LEVEL.bounds - 6;
+    };
+
+    let placed = 0;
+    for (const spec of BUILDINGS) {
+      this.b.setChunk(spec.district || districtAt(spec.x, spec.z).id);
+      const faces = [
+        { nx: 0, nz: 1, out: spec.d / 2 },
+        { nx: 0, nz: -1, out: spec.d / 2 },
+        { nx: 1, nz: 0, out: spec.w / 2 },
+        { nx: -1, nz: 0, out: spec.w / 2 },
+      ];
+      for (const face of faces) {
+        const gap = 3.4;
+        const px = spec.x + face.nx * (face.out + gap);
+        const pz = spec.z + face.nz * (face.out + gap);
+        if (!clear(px, pz, 1.6)) continue;
+
+        const roll = rng();
+        if (roll < 0.34) this._streetLamp(px, pz, face, steel, lamp);
+        else if (roll < 0.58) this._vendingMachine(px, pz, face, rng, ink);
+        else if (roll < 0.78) this._planter(px, pz, steel, leaf, leafDark, rng);
+        else this._bollards(px, pz, face, steel);
+        placed++;
+      }
+    }
+    this.propCount = placed;
+  }
+
+  /** Post, curved arm and a lit head -- the tallest thing at street level. */
+  _streetLamp(x, z, face, steel, lampMat) {
+    const height = 7.2;
+    this.b.add(cylGeo(0.16, 0.24, height, 8), steel, {
+      transform: { x, y: 0, z }, surface: SURFACE.METAL,
+    });
+    this.b.add(domeGeo(0.5, 0.25, 10), steel, { transform: { x, y: 0.1, z }, collide: false });
+    // The arm leans back over the road the building faces.
+    const reach = 1.5;
+    this.b.add(cylGeo(0.11, 0.11, reach, 6), steel, {
+      transform: {
+        x: x + face.nx * reach * 0.5, y: height - 0.1, z: z + face.nz * reach * 0.5,
+        rx: face.nz ? face.nz * Math.PI / 2 : 0,
+        rz: face.nx ? -face.nx * Math.PI / 2 : 0,
+      },
+      collide: false,
+    });
+    this.b.add(slabGeo(0.9, 0.3, 0.5, 0.12), lampMat, {
+      transform: { x: x + face.nx * reach, y: height - 0.3, z: z + face.nz * reach, ry: face.nx ? Math.PI / 2 : 0 },
+      collide: false, castShadow: false,
+    });
+  }
+
+  /** A lit drinks machine. Loud, chest height, and everywhere in Tokyo-to. */
+  _vendingMachine(x, z, face, rng, ink) {
+    const colors = [PALETTE.hotPink, PALETTE.cyan, PALETTE.tangerine, PALETTE.lime];
+    const shell = toon(colors[Math.floor(rng() * colors.length)]);
+    const ry = face.nx ? Math.PI / 2 : 0;
+    this.b.add(towerGeo(1.5, 2.1, 0.9, 0.16), shell, {
+      transform: { x, y: 0, z, ry }, surface: SURFACE.METAL,
+    });
+    // The glass front, facing the street.
+    this.b.add(slabGeo(1.1, 1.3, 0.1, 0.05), ink, {
+      transform: {
+        x: x + face.nx * 0.48, y: 1.25, z: z + face.nz * 0.48, ry,
+      },
+      collide: false, castShadow: false,
+    });
+    this.b.add(slabGeo(1.3, 0.14, 0.12, 0.05), toon(PALETTE.sunYellow), {
+      transform: { x: x + face.nx * 0.5, y: 2.0, z: z + face.nz * 0.5, ry },
+      collide: false, castShadow: false,
+    });
+  }
+
+  /** A raised bed with a shrub in it: a low ledge plus some green. */
+  _planter(x, z, steel, leaf, leafDark, rng) {
+    const r = 1.25;
+    this.b.add(cylGeo(r, r, 0.75, 10), steel, { transform: { x, y: 0, z } });
+    this.b.add(cylGeo(r - 0.16, r - 0.16, 0.12, 10), leafDark, {
+      transform: { x, y: 0.72, z }, collide: false,
+    });
+    const blobs = 2 + Math.floor(rng() * 3);
+    for (let i = 0; i < blobs; i++) {
+      const a = (i / blobs) * Math.PI * 2 + rng();
+      const rad = 0.42 + rng() * 0.3;
+      this.b.add(sphereGeo(rad, 8), i % 2 ? leafDark : leaf, {
+        transform: {
+          x: x + Math.cos(a) * (r - rad) * 0.7,
+          y: 0.95 + rad * 0.7,
+          z: z + Math.sin(a) * (r - rad) * 0.7,
+        },
+        collide: false,
+      });
+    }
+  }
+
+  /** A short run of posts along the kerb. Non-colliding: tripping on a bollard
+   *  mid-combo is irritating rather than interesting. */
+  _bollards(x, z, face, steel) {
+    const along = face.nx ? { x: 0, z: 1 } : { x: 1, z: 0 };
+    for (let i = -1; i <= 1; i++) {
+      this.b.add(cylGeo(0.14, 0.18, 0.95, 8), steel, {
+        transform: { x: x + along.x * i * 2.4, y: 0, z: z + along.z * i * 2.4 },
+        collide: false,
+      });
+      this.b.add(domeGeo(0.17, 0.14, 8), steel, {
+        transform: { x: x + along.x * i * 2.4, y: 0.95, z: z + along.z * i * 2.4 },
+        collide: false,
+      });
+    }
   }
 
   _sign(spec, sign) {
