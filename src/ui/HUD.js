@@ -430,13 +430,19 @@ export class HUD {
       const onScreen = !behind && x > pad && x < w - pad && y > pad && y < h - pad;
       let angle = 0;
       if (!onScreen) {
+        // Park off-screen markers on an ellipse rather than the edges of a
+        // rectangle. A rectangle puts them hard into the corners, which is
+        // exactly where the score, cans and timer panels live -- distances
+        // ended up printed underneath the HUD. An inscribed ellipse keeps
+        // them clear of the corners for free.
         const cx = w / 2;
         const cy = h / 2;
+        const rx = Math.max(1, w / 2 - pad);
+        const ry = Math.max(1, h / 2 - pad);
         const dx = x - cx;
         const dy = y - cy;
-        const sx = Math.abs(dx) > 1e-3 ? (w / 2 - pad) / Math.abs(dx) : Infinity;
-        const sy = Math.abs(dy) > 1e-3 ? (h / 2 - pad) / Math.abs(dy) : Infinity;
-        const s = Math.min(sx, sy, 1e6);
+        const len = Math.hypot(dx / rx, dy / ry);
+        const s = len > 1e-4 ? 1 / len : 0;
         x = cx + dx * s;
         y = cy + dy * s;
         angle = Math.atan2(dy, dx) + Math.PI / 2;

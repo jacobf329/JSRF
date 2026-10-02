@@ -194,7 +194,12 @@ const travel = await page.evaluate(async () => {
     let distance = 0;
     let prev = null;
     const shapes = [];
+    const weights = [];
     const steps = 60;
+    // The rotation has to be read on the last frame the trick is still live.
+    // Sampling after completion reads whatever the idle branch has damped it
+    // to, which made this check pass without testing anything.
+    let last = { spin: 0, flip: 0, roll: 0 };
     for (let i = 0; i < steps; i++) {
       p._updateTrickAnimation(p.trickDuration / steps);
       m.update(1 / 60, p);
@@ -202,21 +207,36 @@ const travel = await page.evaluate(async () => {
       if (prev) for (let k = 0; k < j.length; k++) distance += Math.abs(j[k] - prev[k]);
       prev = j.slice();
       if (i % 12 === 0) shapes.push(p.trickPose);
+      // How strongly the closing key ever actually gets applied. It is always
+      // the *next* key of the pair, never the current one -- the key index is
+      // clamped so the pair's first slot stops at the second-to-last shape.
+      if (p.trick && p.trickPoseNext === trick.keys[trick.keys.length - 1]) {
+        weights.push(p.trickPoseWeight * p.trickPoseMix);
+      }
       if (!p.trick) break;
+      last = {
+        spin: p.trickSpin / (Math.PI * 2),
+        flip: p.trickFlip / (Math.PI * 2),
+        roll: p.trickRoll / (Math.PI * 2),
+      };
     }
     return {
       distance: +distance.toFixed(2),
       shapes,
-      // Everything must be back on its axis when the trick ends.
-      endSpin: +(p.trickSpin / (Math.PI * 2)).toFixed(4),
-      endFlip: +(p.trickFlip / (Math.PI * 2)).toFixed(4),
-      endRoll: +(p.trickRoll / (Math.PI * 2)).toFixed(4),
+      // Everything must be back on its stated whole/half turn as it ends.
+      endSpin: +last.spin.toFixed(4),
+      endFlip: +last.flip.toFixed(4),
+      endRoll: +last.roll.toFixed(4),
+      lastKeyWeight: +Math.max(0, ...weights).toFixed(3),
+      wanted: { spin: trick.spin, flip: trick.flip, roll: trick.roll },
     };
   };
 
   const all = T.allTricks();
   const held = run(all.find((t) => t.id === 'tuckknee'));
   const moved = run(all.find((t) => t.id === 'mctwist'));
+  // A five-key trick is where the release used to swallow the closing shape.
+  const long = run(all.find((t) => t.keys.length >= 5) || all.find((t) => t.id === 'mctwist'));
 
   // A trick with swing must still land on exactly its stated turns: the swing
   // is amplitude that comes back, not rotation that counts.
@@ -231,7 +251,147 @@ const travel = await page.evaluate(async () => {
     if (!p.trick) break;
   }
 
-  return { held, moved, swing: { mid: +mid.toFixed(3), amplitude: swung.swingZ } };
+  // --- no snap, in isolation or when chained.
+  //
+  // A half-turn trick ends half a turn round. Hard-zeroing that on the
+  // completion frame popped the body 180 degrees in one frame, and starting
+  // the next trick from zero popped whatever was still unwinding.
+  //
+  // The property that catches both without flagging legitimately fast moves:
+  // once a trick is over, the body must never turn further in a frame than it
+  // did at any point during the trick. A 2.5-turn McTwist genuinely moves 48
+  // degrees in a frame and that is fine; the settle afterwards decelerating
+  // from it is fine; a single frame that outruns the trick itself is a snap.
+  let worstAfter = 0;
+  let duringMax = 0;
+  let worstTrick = null;
+  const halfTurn = all.filter((x) => x.kind === 'air'
+    && [x.spin, x.flip, x.roll].some((v) => Math.abs(v - Math.round(v)) > 0.01));
+
+  const wrap = (a) => { let d = a % (Math.PI * 2); if (d > Math.PI) d -= Math.PI * 2; if (d <= -Math.PI) d += Math.PI * 2; return d; };
+
+  const chain = (tricks, gapFrames) => {
+    p.setState('air');
+    p.grounded = false;
+    p.trick = null;
+    p.trickSpin = 0; p.trickFlip = 0; p.trickRoll = 0;
+    p.trickCarry = { spin: 0, flip: 0, roll: 0 };
+    for (const a of ['spin', 'flip', 'roll']) { p.trickSettle[a].value = 0; p.trickSettle[a].velocity = 0; }
+    let prev = [0, 0, 0];
+    for (const t of tricks) {
+      p.trickCarry.spin = wrap(p.trickSpin);
+      p.trickCarry.flip = wrap(p.trickFlip);
+      p.trickCarry.roll = wrap(p.trickRoll);
+      p.trick = t;
+      p.trickDuration = t.duration || 0.5;
+      p.trickTimer = p.trickDuration;
+      const frames = Math.ceil(p.trickDuration * 60) + gapFrames;
+      let live = 0;
+      for (let i = 0; i < frames; i++) {
+        const wasLive = !!p.trick;
+        p._updateTrickAnimation(1 / 60);
+        const now = [p.trickSpin, p.trickFlip, p.trickRoll];
+        for (let k = 0; k < 3; k++) {
+          // Shortest path between the two orientations, not the raw
+          // difference: taking three whole turns out of a leftover changes the
+          // number by 6*pi and the picture by nothing at all.
+          const step = Math.abs(wrap(now[k] - prev[k]));
+          if (i === 0) continue;
+          if (wasLive) { duringMax = Math.max(duringMax, step); live = Math.max(live, step); }
+          else if (step > worstAfter) { worstAfter = step; worstTrick = t.id; }
+        }
+        prev = now;
+      }
+    }
+  };
+
+  for (const t of halfTurn) chain([t], 30);              // each on its own
+  chain(halfTurn.slice(0, 8), 0);                        // thrown back to back
+
+  // --- no pose channel may latch.
+  //
+  // The locomotion pass is the only thing that returns a joint to rest: the
+  // overlay lerps toward a target and stops, so a channel nothing else writes
+  // keeps whatever the last trick left in it forever. Rather than spot-check
+  // the one that broke, drive every channel in the canonical list on its own
+  // and watch all of them come back.
+  const { POSE_CHANNELS, POSES } = await import('/src/player/Poses.js');
+  const readers = {
+    hips: () => 0.92 - m.hips.position.y,
+    spineX: () => m.body.rotation.x, spineY: () => m.body.rotation.y, spineZ: () => m.body.rotation.z,
+    neckX: () => m.neck.rotation.x, neckY: () => m.neck.rotation.y,
+    armLX: () => m.armL.upper.rotation.x, armLY: () => m.armL.upper.rotation.y,
+    armLZ: () => m.armL.upper.rotation.z, armLLower: () => m.armL.lower.rotation.x,
+    armRX: () => m.armR.upper.rotation.x, armRY: () => m.armR.upper.rotation.y,
+    armRZ: () => m.armR.upper.rotation.z, armRLower: () => m.armR.lower.rotation.x,
+    legLThighX: () => m.legL.thigh.rotation.x, legLThighY: () => m.legL.thigh.rotation.y,
+    legLThighZ: () => m.legL.thigh.rotation.z, legLShin: () => m.legL.shin.rotation.x,
+    legLFoot: () => m.legL.foot.rotation.x,
+    legRThighX: () => m.legR.thigh.rotation.x, legRThighY: () => m.legR.thigh.rotation.y,
+    legRThighZ: () => m.legR.thigh.rotation.z, legRShin: () => m.legR.shin.rotation.x,
+    legRFoot: () => m.legR.foot.rotation.x,
+  };
+
+  p.trick = null;
+  p.trickSpin = 0; p.trickFlip = 0; p.trickRoll = 0;
+  for (const a of ['spin', 'flip', 'roll']) { p.trickSettle[a].value = 0; p.trickSettle[a].velocity = 0; }
+  p.state = 'skate';
+  p.grounded = true;
+
+  const channels = [];
+  for (const channel of POSE_CHANNELS) {
+    const read = readers[channel];
+    if (!read) { channels.push({ channel, applied: false, rest: null, missingReader: true }); continue; }
+
+    // Most of these channels are driven by the skating stride, so "rest" is a
+    // band, not a value. Measure the band over a few full cycles first, then
+    // check the channel comes back inside it -- comparing against a single
+    // sample just compares two different phases of the same walk.
+    p.trickPose = null; p.trickPoseNext = null; p.trickPoseWeight = 0;
+    for (let i = 0; i < 180; i++) m.update(1 / 60, p);
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let i = 0; i < 240; i++) {
+      m.update(1 / 60, p);
+      const v = read();
+      lo = Math.min(lo, v); hi = Math.max(hi, v);
+    }
+    const pad = Math.max(0.03, (hi - lo) * 0.2);
+
+    // A pose with exactly one channel in it, injected the way a trick would.
+    POSES.__probe = { [channel]: channel === 'hips' ? 0.3 : 0.8 };
+    p.trickPose = '__probe'; p.trickPoseNext = '__probe';
+    p.trickPoseMix = 0; p.trickPoseWeight = 1;
+    for (let i = 0; i < 60; i++) m.update(1 / 60, p);
+    const held = read();
+
+    p.trickPose = null; p.trickPoseNext = null; p.trickPoseWeight = 0;
+    for (let i = 0; i < 300; i++) m.update(1 / 60, p);
+    const after = read();
+
+    channels.push({
+      channel,
+      applied: held < lo - pad || held > hi + pad,
+      returned: after >= lo - pad && after <= hi + pad,
+      band: [+lo.toFixed(3), +hi.toFixed(3)],
+      held: +held.toFixed(3), after: +after.toFixed(3),
+    });
+  }
+  delete POSES.__probe;
+
+  // No pose may use a channel the canonical list does not know about.
+  const known = new Set(POSE_CHANNELS);
+  const strays = [];
+  for (const [name, pose] of Object.entries(POSES)) {
+    for (const key of Object.keys(pose)) if (!known.has(key)) strays.push(`${name}.${key}`);
+  }
+
+  return {
+    held, moved, long,
+    swing: { mid: +mid.toFixed(3), amplitude: swung.swingZ },
+    worstAfter: +worstAfter.toFixed(3), duringMax: +duringMax.toFixed(3), worstTrick,
+    channels, strays,
+  };
 });
 
 console.log('\n' + JSON.stringify({ cat, travel }, null, 2));
@@ -264,8 +424,18 @@ const ok = {
   movesTravelFurtherThanStances: travel.moved.distance > travel.held.distance * 1.5,
   movesVisitSeveralShapes: new Set(travel.moved.shapes).size >= 3,
   swingPeaksMidTrick: Math.abs(travel.swing.mid) > Math.abs(travel.swing.amplitude) * 0.5,
-  tricksLandOnAxis: [travel.moved.endFlip, travel.moved.endSpin, travel.moved.endRoll]
-    .every((v) => Math.abs(v - Math.round(v)) < 0.02),
+  // Read on the trick's last live frame: it must land on exactly the turns it
+  // claims, which is what proves the swing came back and the curve ended at 1.
+  tricksLandOnTheirStatedTurns:
+    Math.abs(travel.moved.endFlip - travel.moved.wanted.flip) < 0.02
+    && Math.abs(travel.moved.endSpin - travel.moved.wanted.spin) < 0.02
+    && Math.abs(travel.moved.endRoll - travel.moved.wanted.roll) < 0.02,
+  // The closing key has to be applied at real strength, not as the pose fades.
+  longTricksReachTheirLastShape: travel.long.lastKeyWeight > 0.8,
+  rotationNeverSnapsAfterATrick: travel.worstAfter <= travel.duringMax + 1e-6,
+  everyPoseChannelIsApplied: travel.channels.every((c) => c.applied),
+  everyPoseChannelReturnsToRest: travel.channels.every((c) => c.returned),
+  noPoseUsesAnUnknownChannel: travel.strays.length === 0,
 };
 console.log('\n--- checks ---');
 for (const [k, v] of Object.entries(ok)) console.log(`  ${v ? 'PASS' : 'FAIL'}  ${k}`);

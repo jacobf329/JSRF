@@ -458,6 +458,17 @@ export class PlayerModel {
     const targetPitch = hit ? -0.9 : tagging ? 0.05 : grinding ? 0.16 : airborne ? -0.12 : speedN * 0.32;
     this.body.rotation.x = damp(this.body.rotation.x, targetPitch, 9, dt);
 
+    // Every channel a pose can write has to be written here too, or it latches.
+    // The locomotion pass is the only thing that returns a joint to rest: the
+    // overlay lerps toward a target and stops, so a channel nothing else
+    // touches keeps whatever the last trick left in it. A twist pose used to
+    // leave the torso 43 degrees round for the rest of the run.
+    this.body.rotation.y = damp(this.body.rotation.y, 0, 9, dt);
+    this.armL.upper.rotation.y = damp(this.armL.upper.rotation.y, 0, 10, dt);
+    this.armR.upper.rotation.y = damp(this.armR.upper.rotation.y, 0, 10, dt);
+    this.legL.thigh.rotation.y = damp(this.legL.thigh.rotation.y, 0, 10, dt);
+    this.legR.thigh.rotation.y = damp(this.legR.thigh.rotation.y, 0, 10, dt);
+
     this._tuck = damp(this._tuck, airborne ? 1 : 0, 9, dt);
     this._split = damp(this._split, grinding ? 1 : 0, 12, dt);
     this._wall = damp(this._wall, wallriding ? 1 : 0, 10, dt);

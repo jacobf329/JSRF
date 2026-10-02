@@ -109,6 +109,8 @@ class Rival {
       trickSpin: 0,
       trickRoll: 0,
       trickPose: null,
+      trickPoseNext: null,
+      trickPoseMix: 0,
       trickPoseWeight: 0,
       invulnerable: 0,
     };

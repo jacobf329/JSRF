@@ -15,6 +15,20 @@ export function damp(a, b, rate, dt) {
   return lerp(a, b, 1 - Math.exp(-rate * dt));
 }
 
+/**
+ * Fold an angle into (-pi, pi].
+ *
+ * Whole turns are invisible -- three full rotations and none look identical --
+ * so a leftover rotation has to have them taken out before anything unwinds
+ * it, or the body spins all the way back the way it came.
+ */
+export function wrapAngle(a) {
+  let d = a % TAU;
+  if (d > Math.PI) d -= TAU;
+  if (d <= -Math.PI) d += TAU;
+  return d;
+}
+
 /** Shortest signed delta between two angles, in (-PI, PI]. */
 export function angleDelta(from, to) {
   let d = (to - from) % TAU;
@@ -28,11 +42,16 @@ export function dampAngle(from, to, rate, dt) {
 }
 
 /**
- * Step a critically-damped-ish spring one frame.
+ * Step a spring one frame.
  *
  * `s` is `{ value, velocity }`, mutated in place. This is what gives a rig
  * follow-through: hair, coat tails and squash all chase a target rather than
  * snapping to it, so the body leads and the soft parts arrive late.
+ *
+ * Every caller runs it underdamped on purpose -- critical damping for this
+ * integrator is about `2 * sqrt(stiffness)` and all of them sit below it --
+ * because the overshoot is the bounce. Pick damping at or above that line for
+ * anything that must settle without wobbling.
  *
  * The step is clamped because a long frame (a tab coming back from the
  * background, a hitch) can otherwise overshoot hard enough to explode.

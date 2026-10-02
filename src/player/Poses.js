@@ -455,7 +455,16 @@ export const POSES = {
   },
 };
 
-/** Channel names, so the rig can iterate without knowing each pose's shape. */
+/**
+ * Every channel a pose is allowed to write.
+ *
+ * This is the canonical list, and it is enforced: verify-tricks checks that no
+ * pose uses a channel missing from it, that the rig applies every one of them,
+ * and -- the important one -- that every one returns to rest after the pose is
+ * released. A channel the locomotion pass never writes latches forever,
+ * because the overlay only ever lerps toward a target and stops. `spineY` did
+ * exactly that and left the torso 43 degrees round for the rest of a run.
+ */
 export const POSE_CHANNELS = Object.freeze([
   'hips', 'spineX', 'spineY', 'spineZ', 'neckX', 'neckY',
   'armLX', 'armLY', 'armLZ', 'armLLower', 'armRX', 'armRY', 'armRZ', 'armRLower',
@@ -463,6 +472,3 @@ export const POSE_CHANNELS = Object.freeze([
   'legRThighX', 'legRThighY', 'legRThighZ', 'legRShin', 'legRFoot',
 ]);
 
-export function getPose(name) {
-  return POSES[name] || null;
-}

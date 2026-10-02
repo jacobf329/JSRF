@@ -44,19 +44,6 @@ const RIM = {
   strength: 0.13,
 };
 
-export function setRimLight({ color, power, strength } = {}) {
-  if (color !== undefined) RIM.color.set(color);
-  if (power !== undefined) RIM.power = power;
-  if (strength !== undefined) RIM.strength = strength;
-  for (const mat of toonCache.values()) {
-    const u = mat.userData.rimUniforms;
-    if (!u) continue;
-    u.uRimColor.value.copy(RIM.color);
-    u.uRimPower.value = RIM.power;
-    u.uRimStrength.value = RIM.strength;
-  }
-}
-
 function addRim(mat) {
   const uniforms = {
     uRimColor: { value: RIM.color.clone() },

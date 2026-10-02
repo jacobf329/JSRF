@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { skaterConfigFor, traitsFor, DEFAULT_RUDIE } from './Rudies.js';
 import { SURFACE } from '../world/Collision.js';
 import { RAIL_TYPE } from '../world/Rail.js';
-import { clamp, dampAngle, damp } from '../core/MathUtils.js';
+import { clamp, dampAngle, damp, wrapAngle, spring } from '../core/MathUtils.js';
 import { pickAirTrick, pickGrindTrick, pickWallTrick, directionFromInput, curveFor, arc } from './Tricks.js';
 
 export const PSTATE = {
@@ -15,6 +15,10 @@ export const PSTATE = {
   BAIL: 'bail',
 };
 
+
+// How much of a trick's duration the pose sequence occupies. The rest is the
+// release, during which the last key is held.
+const TRICK_POSE_HOLD = 0.78;
 
 const _up = new THREE.Vector3(0, 1, 0);
 const _fwd = new THREE.Vector3();
@@ -111,6 +115,21 @@ export class Player {
     this.trickPoseNext = null;
     this.trickPoseMix = 0;
     this.trickPoseWeight = 0;
+    // Rotation left over from the previous trick, carried into the next one
+    // and unwound under it. Without this, throwing a second trick before a
+    // 540 has settled snaps the body back to forward in a single frame.
+    this.trickCarry = { spin: 0, flip: 0, roll: 0 };
+    // How the body settles once a trick ends. A trick can finish while still
+    // turning hard -- a late shove-it is at its fastest on the final frame --
+    // so the leftover rotation is handed to a spring carrying that exit speed
+    // rather than being damped from a standstill, which reversed direction in
+    // one frame and read as the body hitting a wall.
+    this.trickSettle = {
+      spin: { value: 0, velocity: 0 },
+      flip: { value: 0, velocity: 0 },
+      roll: { value: 0, velocity: 0 },
+    };
+    this._trickPrev = { spin: 0, flip: 0, roll: 0 };
     this.grindVariant = 0;
     this.grindDirection = 'neutral';
     this.airTricks = 0;
@@ -480,6 +499,13 @@ export class Player {
     this.trickPoseNext = null;
     this.trickPoseMix = 0;
     this.trickPoseWeight = 0;
+    this.trickCarry.spin = 0;
+    this.trickCarry.flip = 0;
+    this.trickCarry.roll = 0;
+    for (const axis of ['spin', 'flip', 'roll']) {
+      this.trickSettle[axis].value = 0;
+      this.trickSettle[axis].velocity = 0;
+    }
     this.rail = null;
     this.airTime = 0;
     this.airTricks = 0;
@@ -754,6 +780,13 @@ export class Player {
 
   _startTrick(input, spinning) {
     const trick = pickAirTrick(input.move.x, input.move.y, this.airTricks, spinning);
+    // Every trick's own rotation starts from zero, so whatever the last one
+    // left standing has to be carried rather than dropped. Whole turns come
+    // out first: they look identical to none, and unwinding them would spin
+    // the body all the way back round.
+    this.trickCarry.spin = wrapAngle(this.trickSpin);
+    this.trickCarry.flip = wrapAngle(this.trickFlip);
+    this.trickCarry.roll = wrapAngle(this.trickRoll);
     this.trick = trick;
     this.trickDuration = trick.duration || this.C.trickTime;
     this.trickTimer = this.trickDuration;
@@ -786,9 +819,13 @@ export class Player {
     if (!this.trick) {
       this.trickPoseWeight = damp(this.trickPoseWeight, 0, 11, dt);
       if (this.trickPoseWeight < 0.02) { this.trickPose = null; this.trickPoseNext = null; }
-      this.trickSpin = damp(this.trickSpin, 0, 10, dt);
-      this.trickFlip = damp(this.trickFlip, 0, 10, dt);
-      this.trickRoll = damp(this.trickRoll, 0, 10, dt);
+      // Settle on a spring that already carries the speed the trick ended at,
+      // so the body decelerates through the last of the turn instead of
+      // stopping dead and starting back the other way.
+      const settle = this.trickSettle;
+      this.trickSpin = spring(settle.spin, 0, 120, 21, dt);
+      this.trickFlip = spring(settle.flip, 0, 120, 21, dt);
+      this.trickRoll = spring(settle.roll, 0, 120, 21, dt);
       return;
     }
 
@@ -803,16 +840,28 @@ export class Player {
     // read as thrown rather than rotated -- the body leaves its axis, reaches,
     // and is hauled back in time to land.
     const swing = arc(t);
-    this.trickSpin = trick.spin * turn + trick.swingY * swing;
-    this.trickFlip = trick.flip * turn + trick.swingX * swing;
-    this.trickRoll = trick.roll * turn + trick.swingZ * swing;
+    const carry = this.trickCarry;
+    carry.spin = damp(carry.spin, 0, 9, dt);
+    carry.flip = damp(carry.flip, 0, 9, dt);
+    carry.roll = damp(carry.roll, 0, 9, dt);
+    const prev = this._trickPrev;
+    prev.spin = this.trickSpin;
+    prev.flip = this.trickFlip;
+    prev.roll = this.trickRoll;
+    this.trickSpin = trick.spin * turn + trick.swingY * swing + carry.spin;
+    this.trickFlip = trick.flip * turn + trick.swingX * swing + carry.flip;
+    this.trickRoll = trick.roll * turn + trick.swingZ * swing + carry.roll;
 
     // Walk the pose sequence. Snap in, travel through the shapes, release --
     // a grab that eases in and out over its whole duration never actually
     // looks like the pose, and one that holds a single shape never moves.
     const keys = trick.keys;
     const span = keys.length - 1;
-    const at = clamp(t, 0, 1) * span;
+    // Run the sequence out before the overlay starts releasing, then hold the
+    // last shape through the release. Spread over the whole duration instead,
+    // the closing `catch` only arrives as the pose fades to nothing -- so the
+    // landing gather the sequences are built around never actually reads.
+    const at = clamp(t / TRICK_POSE_HOLD, 0, 1) * span;
     const i = Math.min(Math.floor(at), Math.max(0, span - 1));
     this.trickPose = keys[i];
     this.trickPoseNext = keys[Math.min(i + 1, span)];
@@ -820,7 +869,7 @@ export class Player {
     // Smoothstep between keys so the body arrives at each shape rather than
     // sliding past it at a constant rate.
     this.trickPoseMix = local * local * (3 - 2 * local);
-    this.trickPoseWeight = clamp(Math.min(t / 0.14, (1 - t) / 0.22), 0, 1);
+    this.trickPoseWeight = clamp(Math.min(t / 0.14, (1 - t) / (1 - TRICK_POSE_HOLD)), 0, 1);
 
     if (this.trickTimer <= 0) {
       // Points land when the trick does, not when it starts -- otherwise a
@@ -829,11 +878,22 @@ export class Player {
         player: this, trick: this.trick, progress: 1, aborted: false,
       });
       this.trick = null;
-      this.trickSpin = 0;
-      this.trickFlip = 0;
-      this.trickRoll = 0;
       this.trickPoseNext = null;
       this.trickPoseMix = 0;
+      // Take the whole turns out and leave the remainder. Zeroing outright
+      // snapped a half-turn trick 180 degrees in one frame; leaving it whole
+      // made a 1080 unwind three full turns backwards. What is left is the
+      // part that is actually visible, handed to the settle spring along with
+      // the speed the body was turning at on its last frame.
+      const rate = dt > 1e-6 ? 1 / dt : 60;
+      for (const [axis, value] of [['spin', this.trickSpin], ['flip', this.trickFlip], ['roll', this.trickRoll]]) {
+        const s = this.trickSettle[axis];
+        s.value = wrapAngle(value);
+        s.velocity = (value - this._trickPrev[axis]) * rate;
+      }
+      this.trickSpin = this.trickSettle.spin.value;
+      this.trickFlip = this.trickSettle.flip.value;
+      this.trickRoll = this.trickSettle.roll.value;
     }
   }
 
