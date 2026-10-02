@@ -165,7 +165,12 @@ const clock = await page.evaluate(async () => {
   let ended = null;
   g.events.on('mission:complete', ({ reason, stats }) => { ended = { reason, winner: stats.winner.short }; });
   g.mission.timeLeft = 0.05;
-  await new Promise((r) => setTimeout(r, 400));
+  // Wait for the frame that ends the run, not for a fixed stretch of wall
+  // clock: how long a frame takes here depends on how much is on screen.
+  const deadline = Date.now() + 15000;
+  while (!ended && Date.now() < deadline) {
+    await new Promise((r) => requestAnimationFrame(r));
+  }
   return { ended, mode: g.mode };
 });
 

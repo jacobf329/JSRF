@@ -64,10 +64,16 @@ void main() {
   vec2 viewCentre = rect.xy + rect.zw * 0.5;
   vec2 viewUv = (vUv - rect.xy) / rect.zw;
 
-  vec2 o = uTexel * uOutlineWidth;
-
   // Roberts cross on both linear depth and view-space normals.
   float d0 = readDepth(vUv);
+
+  // Ink weight falls off with distance. A fixed pixel width makes a distant
+  // building look more heavily drawn than the skater in front of it, because
+  // the same line is a larger fraction of a smaller shape. Only the far end
+  // is tapered: widening the near end as well just finds every panel seam on
+  // the nearest model and inks that too.
+  float ink = mix(1.0, 0.55, smoothstep(0.06, 0.45, d0));
+  vec2 o = uTexel * uOutlineWidth * ink;
   float da = readDepth(vUv + vec2( o.x,  o.y));
   float db = readDepth(vUv + vec2(-o.x, -o.y));
   float dc = readDepth(vUv + vec2( o.x, -o.y));

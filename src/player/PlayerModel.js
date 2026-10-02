@@ -3,45 +3,55 @@ import { toon, flat } from '../render/Materials.js';
 import { PALETTE } from '../render/Palette.js';
 import { PSTATE } from './Player.js';
 import { POSES } from './Poses.js';
-import { clamp, damp } from '../core/MathUtils.js';
+import { clamp, damp, spring, angleDelta } from '../core/MathUtils.js';
 import { RUDIES } from './Rudies.js';
+import { SKATER } from './PlayerConfig.js';
+import { roundedBox, limbGeo, blobGeo, swoopGeo, skateGeo, skateFrameGeo, PartBuilder } from './Shapes.js';
 
 const SHOE = 0xf4f6ff;
+const INK = 0x1b1e2c;
 
 // Kept as an export because the rig and the asset pipeline both index looks by
 // number; the roster itself, stats and all, lives in Rudies.js.
 export const RUDIE_SKINS = RUDIES;
 
-function box(w, h, d, color, opts = {}) {
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), toon(color, opts.mat));
-  mesh.castShadow = true;
-  mesh.receiveShadow = false;
-  if (opts.pos) mesh.position.set(opts.pos[0], opts.pos[1], opts.pos[2]);
-  if (opts.rot) mesh.rotation.set(opts.rot[0], opts.rot[1], opts.rot[2]);
-  return mesh;
-}
-
-/** A limb pivot: children hang downward from the joint. */
-function limb(length, w, d, color) {
-  const pivot = new THREE.Group();
-  const mesh = box(w, length, d, color, { pos: [0, -length / 2, 0] });
-  pivot.add(mesh);
-  pivot.userData.length = length;
-  return pivot;
+/**
+ * One mesh per colour for a joint, merged.
+ *
+ * Every part of the rig is built through this: a joint collects its shapes,
+ * they are merged by colour, and the joint ends up carrying two or three
+ * meshes instead of a dozen. With four players and three rival crews on screen
+ * that is the difference between a rig you can afford to detail and one you
+ * cannot.
+ */
+function attach(parent, parts) {
+  for (const { color, geometry } of parts) {
+    const mesh = new THREE.Mesh(geometry, toon(color));
+    mesh.castShadow = true;
+    mesh.receiveShadow = false;
+    parent.add(mesh);
+  }
+  return parent;
 }
 
 /**
- * Hand-built low-poly rudie with fully procedural animation -- no rigs or
- * clips to load, everything is driven from the player's state and speed.
+ * Hand-built rudie with fully procedural animation -- no rigs or clips to
+ * load, everything is driven from the player's state and speed.
+ *
+ * The forms are deliberately chamfered rather than boxed. A cel ramp turns
+ * surface angle into a band, so a flat box is a single flat colour; a rolled
+ * edge picks up a second band along the roll and the outline runs down a curve
+ * instead of a corner.
  */
 export class PlayerModel {
   constructor(skinIndex = 0) {
-    const skinDef = RUDIE_SKINS[skinIndex % RUDIE_SKINS.length];
+    const skinDef = RUDIE_SKINS[Math.max(0, skinIndex) % RUDIE_SKINS.length];
     this.skin = skinDef;
     const JACKET = skinDef.jacket;
     const JACKET_DARK = skinDef.jacketDark;
     const PANTS = skinDef.pants;
     const SKIN = skinDef.skin;
+    const HAIR = skinDef.beanie;
 
     this.root = new THREE.Group();
     this.root.name = `rudie-${skinDef.name}`;
@@ -59,43 +69,97 @@ export class PlayerModel {
     this.hips.position.y = 0.92;
     this.body.add(this.hips);
 
-    // Torso
+    // --- torso: a tapered barrel under a boxy jacket, which is the shape
+    // that reads as a skater in baggy clothes from thirty metres away.
     this.torso = new THREE.Group();
     this.hips.add(this.torso);
-    this.torso.add(box(0.56, 0.42, 0.34, PANTS, { pos: [0, 0.19, 0] }));
-    this.torso.add(box(0.62, 0.52, 0.38, JACKET, { pos: [0, 0.66, 0] }));
-    this.torso.add(box(0.66, 0.14, 0.42, JACKET_DARK, { pos: [0, 0.44, 0] }));
-    // Backpack
-    this.torso.add(box(0.44, 0.5, 0.24, skinDef.pack, { pos: [0, 0.62, -0.28] }));
-    this.torso.add(box(0.1, 0.28, 0.1, skinDef.beanie, { pos: [0.13, 0.86, -0.4] }));
-    this.torso.add(box(0.1, 0.28, 0.1, skinDef.jacket, { pos: [-0.13, 0.86, -0.4] }));
+    {
+      const b = new PartBuilder();
+      // Waist, narrow, so the jacket above it reads as oversized.
+      b.add(limbGeo(0.32, 0.26, 0.2, { segments: 10, squash: 0.72 }), PANTS, { pos: [0, 0.36, 0] });
+      // The jacket is a cone, not a cube: wide across the shoulders, gathered
+      // at the hem. That trapezoid is most of the rudie's silhouette.
+      b.add(limbGeo(0.46, 0.3, 0.24, { segments: 12, squash: 0.68 }), JACKET, { pos: [0, 0.9, 0] });
+      b.add(blobGeo(0.3, 0.13, 0.21, 12), JACKET, { pos: [0, 0.87, 0] });           // shoulder roll
+      b.add(blobGeo(0.26, 0.12, 0.19, 12), JACKET, { pos: [0, 0.46, 0] });          // hem roll
+      b.add(limbGeo(0.17, 0.155, 0.19, { segments: 12, squash: 0.85 }), JACKET_DARK, { pos: [0, 1.06, 0.01] });  // collar
+      b.add(roundedBox(0.07, 0.4, 0.05, 0.03, 2), JACKET_DARK, { pos: [0, 0.68, 0.19], rot: [-0.07, 0, 0] });  // zip
+      // Backpack, rounded and sitting proud of the shoulders.
+      b.add(roundedBox(0.38, 0.44, 0.2, 0.12, 2), skinDef.pack, { pos: [0, 0.64, -0.26] });
+      b.add(roundedBox(0.26, 0.07, 0.07, 0.03, 2), JACKET_DARK, { pos: [0, 0.56, -0.36] });
+      b.add(roundedBox(0.12, 0.05, 0.05, 0.02, 2), skinDef.beanie, { pos: [0, 0.56, -0.38] });
+      // Straps over the shoulders, front side.
+      b.add(roundedBox(0.05, 0.3, 0.04, 0.018, 2), JACKET_DARK, { pos: [0.16, 0.8, 0.17], rot: [0.3, 0, 0.12] });
+      b.add(roundedBox(0.05, 0.3, 0.04, 0.018, 2), JACKET_DARK, { pos: [-0.16, 0.8, 0.17], rot: [0.3, 0, -0.12] });
+      attach(this.torso, b.build());
+    }
 
-    // Head
+    // Coat tails: two swoops hanging off the hem that the animation swings.
+    this.tailL = new THREE.Group();
+    this.tailR = new THREE.Group();
+    this.tailL.position.set(0.17, 0.42, -0.1);
+    this.tailR.position.set(-0.17, 0.42, -0.1);
+    for (const [tail, flip] of [[this.tailL, 1], [this.tailR, -1]]) {
+      const geo = swoopGeo(0.36, 0.22, 0.08, { curl: -1.5, taper: 0.5, segments: 3 });
+      geo.rotateY(Math.PI / 2 * flip * 0.25);
+      attach(tail, [{ color: JACKET, geometry: geo }]);
+      this.torso.add(tail);
+    }
+
+    // --- head
     this.neck = new THREE.Group();
     this.neck.position.y = 0.95;
     this.torso.add(this.neck);
-    this.neck.add(box(0.36, 0.36, 0.34, SKIN, { pos: [0, 0.18, 0] }));
-    this.neck.add(box(0.38, 0.12, 0.36, 0x1b1e2c, { pos: [0, 0.3, 0.01] }));       // visor
-    this.neck.add(box(0.3, 0.06, 0.34, PALETTE.cyan, { pos: [0, 0.3, 0.06] }));    // visor glow
-    this.neck.add(box(0.4, 0.2, 0.38, skinDef.beanie, { pos: [0, 0.44, 0] }));      // beanie
-    this.neck.add(box(0.12, 0.2, 0.16, 0x1b1e2c, { pos: [0.24, 0.2, 0] }));        // headphone L
-    this.neck.add(box(0.12, 0.2, 0.16, 0x1b1e2c, { pos: [-0.24, 0.2, 0] }));       // headphone R
-    this.neck.add(box(0.46, 0.08, 0.1, 0x1b1e2c, { pos: [0, 0.4, -0.02] }));       // headband
+    {
+      const b = new PartBuilder();
+      b.add(limbGeo(0.09, 0.085, 0.1, { segments: 8 }), SKIN, { pos: [0, 0.06, 0] });   // neck
+      b.add(blobGeo(0.22, 0.235, 0.21, 12), SKIN, { pos: [0, 0.23, 0] });              // skull
+      b.add(blobGeo(0.1, 0.08, 0.05, 8), SKIN, { pos: [0, 0.12, 0.16] });              // jaw
+      // A band across the eyes, not a helmet: deep enough to wrap the temples
+      // and no deeper, or it swallows the whole head from three-quarter on.
+      b.add(roundedBox(0.4, 0.1, 0.26, 0.045, 2), INK, { pos: [0, 0.285, 0.07] });     // visor
+      b.add(roundedBox(0.33, 0.05, 0.26, 0.022, 1), PALETTE.cyan, { pos: [0, 0.285, 0.1] });
+      b.add(blobGeo(0.11, 0.125, 0.085, 8), INK, { pos: [0.22, 0.23, 0] });            // headphone cup
+      b.add(blobGeo(0.11, 0.125, 0.085, 8), INK, { pos: [-0.22, 0.23, 0] });
+      b.add(roundedBox(0.44, 0.045, 0.07, 0.02, 2), INK, { pos: [0, 0.42, -0.03], rot: [0.12, 0, 0] });  // headphone arc
+      attach(this.neck, b.build());
+    }
 
-    // Arms
+    // Hair: a cap plus three swoops that the animation springs. Separate from
+    // the head so it can lag behind it.
+    this.hair = new THREE.Group();
+    this.hair.position.y = 0.29;
+    this.neck.add(this.hair);
+    {
+      const b = new PartBuilder();
+      b.add(blobGeo(0.245, 0.235, 0.245, 12), HAIR, { pos: [0, -0.08, -0.035] });
+      b.add(swoopGeo(0.4, 0.2, 0.14, { curl: 0.55, taper: 0.12, segments: 4 }), HAIR, { pos: [0, 0.09, -0.12], rot: [-0.25, 0, 0] });
+      b.add(swoopGeo(0.34, 0.14, 0.1, { curl: 0.2, taper: 0.12, segments: 4 }), HAIR, { pos: [0.13, 0.04, -0.1], rot: [-0.1, -0.55, 0.35] });
+      b.add(swoopGeo(0.34, 0.14, 0.1, { curl: 0.2, taper: 0.12, segments: 4 }), HAIR, { pos: [-0.13, 0.04, -0.1], rot: [-0.1, 0.55, -0.35] });
+      b.add(swoopGeo(0.3, 0.1, 0.08, { curl: -0.3, taper: 0.1, segments: 4 }), HAIR, { pos: [0.05, 0.14, -0.08], rot: [-0.5, -0.2, 0.1] });
+      // Fringe, forward over the visor.
+      b.add(swoopGeo(0.16, 0.26, 0.1, { curl: 0.9, taper: 0.45, segments: 3 }), HAIR, { pos: [0, 0.04, 0.06], rot: [0, Math.PI, 0] });
+      attach(this.hair, b.build());
+    }
+
+    // --- limbs
     this.armL = this._arm(1, JACKET, SKIN);
     this.armR = this._arm(-1, JACKET, SKIN);
     this.torso.add(this.armL.shoulder, this.armR.shoulder);
 
-    // Legs
     this.legL = this._leg(1, PANTS, skinDef.wheel);
     this.legR = this._leg(-1, PANTS, skinDef.wheel);
     this.hips.add(this.legL.hip, this.legR.hip);
 
     // Spray can, shown while tagging.
     this.canProp = new THREE.Group();
-    this.canProp.add(box(0.13, 0.3, 0.13, PALETTE.lime, { pos: [0, -0.1, 0] }));
-    this.canProp.add(box(0.07, 0.06, 0.07, 0x1b1e2c, { pos: [0, 0.07, 0] }));
+    {
+      const b = new PartBuilder();
+      b.add(limbGeo(0.26, 0.065, 0.07, { segments: 10 }), PALETTE.lime, { pos: [0, 0.03, 0] });
+      b.add(limbGeo(0.05, 0.04, 0.045, { segments: 8 }), INK, { pos: [0, 0.09, 0] });
+      b.add(roundedBox(0.08, 0.035, 0.08, 0.015, 1), INK, { pos: [0, 0.1, 0] });
+      attach(this.canProp, b.build());
+    }
     this.canProp.visible = false;
     this.armR.hand.add(this.canProp);
 
@@ -106,9 +170,46 @@ export class PlayerModel {
     this._split = 0;
     this._wall = 0;
     this.wantVisible = true;
+
+    // Secondary motion. Each of these chases the body rather than being driven
+    // by it, so the body leads and the soft parts arrive late -- which is the
+    // difference between a model that moves and a model that is animated.
+    this._hairPitch = { value: 0, velocity: 0 };
+    this._hairRoll = { value: 0, velocity: 0 };
+    this._tail = { value: 0, velocity: 0 };
+    this._tailRoll = { value: 0, velocity: 0 };
+    this._squash = { value: 0, velocity: 0 };
+    this._armLag = { value: 0, velocity: 0 };
+    this._headLead = { value: 0, velocity: 0 };
+    this._lastHeading = 0;
+    this._lastGrounded = true;
+    this._lastFallSpeed = 0;
+
+    this._fitToCapsule();
   }
 
-  /** Lerp the current joint rotations toward a named pose by `weight`. */
+  /**
+   * Scale the rig so it matches the capsule the physics actually uses.
+   *
+   * The rig is modelled in whatever units read nicely part by part, which is
+   * never quite the collision height -- it had drifted to 2.5m against a 1.78m
+   * capsule, so the rudie's feet hung below the ground it was standing on.
+   * Measuring and fitting here means the proportions can keep being tuned by
+   * eye without anyone having to keep a running total.
+   */
+  _fitToCapsule() {
+    this.root.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(this.yawGroup);
+    const height = box.max.y - box.min.y;
+    if (!(height > 0.1)) return;
+    const scale = SKATER.height / height;
+    this.yawGroup.scale.setScalar(scale);
+    // Stand the feet on the origin: the root is placed at the player's feet.
+    this.yawGroup.position.y = -box.min.y * scale;
+    this.scaleFactor = scale;
+  }
+
+/** Lerp the current joint rotations toward a named pose by `weight`. */
   _overlayPose(name, weight) {
     if (!name || weight <= 0.001) return;
     const pose = POSES[name];
@@ -145,49 +246,152 @@ export class PlayerModel {
 
   _arm(side, JACKET, SKIN) {
     const shoulder = new THREE.Group();
-    shoulder.position.set(side * 0.38, 0.78, 0);
-    const upper = limb(0.34, 0.16, 0.16, JACKET);
+    shoulder.position.set(side * 0.38, 0.79, 0);
+
+    // A rounded cap on the shoulder itself, so the joint reads as a joint
+    // rather than two sticks meeting at a gap.
+    attach(shoulder, [{ color: JACKET, geometry: blobGeo(0.14, 0.14, 0.14, 10) }]);
+
+    const upper = new THREE.Group();
     shoulder.add(upper);
+    attach(upper, new PartBuilder()
+      // Baggy at the shoulder, tight at the elbow: the sleeve taper is most of
+      // what makes the jacket read as oversized.
+      .add(limbGeo(0.34, 0.115, 0.075, { segments: 8 }), JACKET)
+      .add(blobGeo(0.08, 0.075, 0.08, 8), JACKET, { pos: [0, -0.33, 0] })
+      .build());
+
     const elbow = new THREE.Group();
     elbow.position.y = -0.34;
     upper.add(elbow);
-    const lower = limb(0.32, 0.14, 0.14, SKIN);
+
+    const lower = new THREE.Group();
     elbow.add(lower);
+    attach(lower, new PartBuilder()
+      .add(limbGeo(0.3, 0.07, 0.055, { segments: 8 }), SKIN)
+      .add(roundedBox(0.14, 0.09, 0.14, 0.04, 2), JACKET, { pos: [0, -0.02, 0] })  // cuff
+      .build());
+
     const hand = new THREE.Group();
-    hand.position.y = -0.32;
+    hand.position.y = -0.3;
     lower.add(hand);
-    hand.add(box(0.15, 0.14, 0.15, PALETTE.sunYellow, { pos: [0, -0.06, 0] }));
+    attach(hand, new PartBuilder()
+      .add(blobGeo(0.075, 0.085, 0.06, 8), PALETTE.sunYellow, { pos: [0, -0.06, 0] })
+      .add(roundedBox(0.11, 0.07, 0.1, 0.03, 1), PALETTE.sunYellow, { pos: [0, -0.1, 0.02] })
+      .build());
+
     return { shoulder, upper, elbow, lower, hand, side };
   }
 
   _leg(side, PANTS, wheelColor) {
     const hip = new THREE.Group();
-    hip.position.set(side * 0.17, 0, 0);
-    const thigh = limb(0.42, 0.2, 0.22, PANTS);
+    hip.position.set(side * 0.19, 0, 0);
+
+    const thigh = new THREE.Group();
     hip.add(thigh);
+    attach(thigh, new PartBuilder()
+      // Wide at the hip, gathered at the knee: baggy trousers.
+      .add(limbGeo(0.42, 0.16, 0.135, { segments: 8 }), PANTS)
+      .add(blobGeo(0.12, 0.1, 0.12, 8), PANTS, { pos: [0, 0, 0] })
+      .build());
+
     const knee = new THREE.Group();
     knee.position.y = -0.42;
     thigh.add(knee);
-    const shin = limb(0.36, 0.17, 0.19, PANTS);
+
+    const shin = new THREE.Group();
     knee.add(shin);
+    attach(shin, new PartBuilder()
+      // Flares back out over the boot, which is the silhouette that makes
+      // the skates look heavy.
+      .add(limbGeo(0.34, 0.125, 0.16, { segments: 8 }), PANTS)
+      .add(blobGeo(0.135, 0.12, 0.135, 8), PANTS, { pos: [0, -0.01, 0] })
+      .add(roundedBox(0.23, 0.09, 0.23, 0.045, 2), PANTS, { pos: [0, -0.32, 0] })
+      .build());
 
     const foot = new THREE.Group();
-    foot.position.y = -0.36;
+    foot.position.y = -0.34;
     shin.add(foot);
-    foot.add(box(0.2, 0.16, 0.44, SHOE, { pos: [0, -0.06, 0.05] }));
-    foot.add(box(0.22, 0.08, 0.5, 0x1b1e2c, { pos: [0, -0.16, 0.05] }));
+    attach(foot, [
+      { color: SHOE, geometry: skateGeo() },
+      { color: INK, geometry: skateFrameGeo() },
+    ]);
+
     const wheels = new THREE.Group();
-    wheels.position.set(0, -0.22, 0);
+    wheels.position.set(0, -0.23, 0);
     foot.add(wheels);
-    const wheelMat = flat(wheelColor);
-    const wheelGeo = new THREE.CylinderGeometry(0.075, 0.075, 0.07, 8);
-    wheelGeo.rotateZ(Math.PI / 2);
+    // The four wheels share an axle and the group is what spins, so they
+    // merge into one mesh and cost one draw call instead of four.
+    const b = new PartBuilder();
     for (let i = 0; i < 4; i++) {
-      const w = new THREE.Mesh(wheelGeo, wheelMat);
-      w.position.set(0, 0, -0.14 + i * 0.11);
+      const wheelGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.06, 10);
+      wheelGeo.rotateZ(Math.PI / 2);
+      b.add(wheelGeo, wheelColor, { pos: [0, 0, -0.145 + i * 0.1] });
+    }
+    for (const { geometry } of b.build()) {
+      const w = new THREE.Mesh(geometry, flat(wheelColor));
+      w.castShadow = true;
       wheels.add(w);
     }
     return { hip, thigh, knee, shin, foot, wheels, side };
+  }
+
+  /**
+   * Everything that answers to the body rather than to the controller.
+   *
+   * None of this changes where the skater is or what they are doing; it is
+   * only what hangs off them and how hard they hit the ground. It runs after
+   * the locomotion pass so it has a settled body to react to.
+   */
+  _secondary(dt, player, { speedN, airborne, grinding, bailing }) {
+    // --- hair. Pitch answers to speed and to falling; roll answers to lean,
+    // both arriving a few frames after the body has already moved.
+    const wind = speedN * 0.55 + (airborne ? clamp(-player.velocity.y * 0.03, -0.3, 0.5) : 0);
+    spring(this._hairPitch, -wind - this.body.rotation.x * 0.4, 150, 16, dt);
+    spring(this._hairRoll, -this.body.rotation.z * 0.8, 150, 16, dt);
+    this.hair.rotation.x = clamp(this._hairPitch.value, -0.9, 0.5);
+    this.hair.rotation.z = clamp(this._hairRoll.value, -0.5, 0.5);
+
+    // --- coat tails. They stream behind at speed, lift in the air, and swing
+    // out opposite the lean when a turn throws them.
+    spring(this._tail, -0.35 - speedN * 0.85 - (airborne ? 0.35 : 0), 110, 14, dt);
+    spring(this._tailRoll, this.body.rotation.z * 1.3, 110, 13, dt);
+    const tail = clamp(this._tail.value, -1.5, 0.3);
+    const tailRoll = clamp(this._tailRoll.value, -0.6, 0.6);
+    this.tailL.rotation.set(tail, 0, tailRoll - 0.12);
+    this.tailR.rotation.set(tail, 0, tailRoll + 0.12);
+
+    // --- squash and stretch. Touching down hard compresses the whole rig and
+    // it springs back; leaving the ground stretches it. Volume is preserved,
+    // so a squashed rudie gets wider rather than just shorter.
+    if (player.grounded && !this._lastGrounded) {
+      // The landing frame has already zeroed the fall, so use the speed the
+      // skater had on the way down.
+      this._squash.velocity -= clamp(this._lastFallSpeed * 0.1, 0, 2.6);
+    } else if (!player.grounded && this._lastGrounded && player.velocity.y > 1) {
+      this._squash.velocity += 0.7;
+    }
+    if (!player.grounded) this._lastFallSpeed = Math.max(0, -player.velocity.y);
+    else this._lastFallSpeed = 0;
+    this._lastGrounded = player.grounded;
+
+    spring(this._squash, 0, 190, 15, dt);
+    const sq = clamp(this._squash.value, -0.3, 0.3);
+    const scale = this.scaleFactor || 1;
+    this.yawGroup.scale.set(scale * (1 - sq * 0.5), scale * (1 + sq), scale * (1 - sq * 0.5));
+
+    // --- arms lag the torso. A rig whose arms turn with the shoulders in the
+    // same frame reads as one rigid piece; a few frames of drag reads as mass.
+    spring(this._armLag, this.body.rotation.z, 120, 14, dt);
+    const drag = bailing ? 0 : (this.body.rotation.z - this._armLag.value) * 1.4;
+    this.armL.upper.rotation.z += drag;
+    this.armR.upper.rotation.z += drag;
+
+    // A grind rides on the rail, so the board hand drops toward it.
+    if (grinding) {
+      this.armL.lower.rotation.x -= 0.25;
+      this.armR.lower.rotation.x -= 0.25;
+    }
   }
 
   /** Drive every joint from the player's current state. */
@@ -283,8 +487,15 @@ export class PlayerModel {
     }
     this.canProp.visible = tagging;
 
-    // Head steadies itself against the body pitch.
+    // Head steadies itself against the body pitch, and leads into turns: a
+    // skater looks where they are going before they get there.
+    const turn = angleDelta(this._lastHeading, player.visualHeading);
+    this._lastHeading = player.visualHeading;
+    spring(this._headLead, clamp(turn / Math.max(dt, 1e-4) * 0.12, -0.6, 0.6), 90, 13, dt);
+    this.neck.rotation.y = this._headLead.value;
     this.neck.rotation.x = damp(this.neck.rotation.x, -this.body.rotation.x * 0.65 + (tagging ? 0.2 : 0), 8, dt);
+
+    this._secondary(dt, player, { speedN, airborne, grinding, bailing });
 
     // The trick pose goes on last, blended over whatever the locomotion
     // animation just produced. Blending after the fact rather than folding the

@@ -4,6 +4,84 @@ import { PALETTE } from './Palette.js';
 const gradientCache = new Map();
 const toonCache = new Map();
 
+/**
+ * A fresnel rim, injected into three's toon shader.
+ *
+ * Cel shading alone gives a surface two or three flat bands and nothing at the
+ * edge, so a curved form silhouetted against the sky loses its own outline.
+ * A rim term puts sky light back along the grazing edge, which is what reads
+ * as a drawn highlight and what separates a rudie from the building behind.
+ *
+ * Patched in rather than written as a custom material so everything three
+ * already does -- shadows, fog, the gradient ramp -- keeps working.
+ */
+const RIM_PARS = /* glsl */ `
+uniform vec3 uRimColor;
+uniform float uRimPower;
+uniform float uRimStrength;
+`;
+
+const RIM_BODY = /* glsl */ `
+{
+  vec3 rimNormal = normalize(normal);
+  vec3 rimView = normalize(vViewPosition);
+  float fres = 1.0 - clamp(dot(rimNormal, rimView), 0.0, 1.0);
+  // Bias the rim upward: a street lit from the sky should glow along the top
+  // edge far more than along the bottom one.
+  float up = 0.55 + 0.45 * clamp(rimNormal.y * 0.5 + 0.5, 0.0, 1.0);
+  float rim = pow(fres, uRimPower) * uRimStrength * up;
+  gl_FragColor.rgb += uRimColor * rim;
+}
+`;
+
+// Deliberately faint. The look this is serving is flat poster colour with ink
+// on top, and a strong rim turns that into moody stylised 3D -- it should be
+// just enough to keep a curved edge from dissolving into whatever is behind
+// it, and no more.
+const RIM = {
+  color: new THREE.Color(0xd8f0ff),
+  power: 4.0,
+  strength: 0.13,
+};
+
+export function setRimLight({ color, power, strength } = {}) {
+  if (color !== undefined) RIM.color.set(color);
+  if (power !== undefined) RIM.power = power;
+  if (strength !== undefined) RIM.strength = strength;
+  for (const mat of toonCache.values()) {
+    const u = mat.userData.rimUniforms;
+    if (!u) continue;
+    u.uRimColor.value.copy(RIM.color);
+    u.uRimPower.value = RIM.power;
+    u.uRimStrength.value = RIM.strength;
+  }
+}
+
+function addRim(mat) {
+  const uniforms = {
+    uRimColor: { value: RIM.color.clone() },
+    uRimPower: { value: RIM.power },
+    uRimStrength: { value: RIM.strength },
+  };
+  mat.userData.rimUniforms = uniforms;
+  mat.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, uniforms);
+    // `vViewPosition` and `normal` are both in scope at this point in three's
+    // toon shader; if the chunk ever moves, the material still compiles and
+    // simply renders without a rim rather than going black.
+    if (!shader.fragmentShader.includes('#include <colorspace_fragment>')) return;
+    shader.fragmentShader = RIM_PARS + shader.fragmentShader.replace(
+      '#include <colorspace_fragment>',
+      `${RIM_BODY}
+#include <colorspace_fragment>`,
+    );
+  };
+  // Materials that differ only by their injected code still need distinct
+  // programs, which three keys off this.
+  mat.customProgramCacheKey = () => 'rim';
+  return mat;
+}
+
 /** Hard-stepped ramp texture: this is what turns Lambert shading into cel bands. */
 export function gradientMap(steps = 3) {
   if (gradientCache.has(steps)) return gradientCache.get(steps);
@@ -53,6 +131,7 @@ export function toon(color, opts = {}) {
     depthWrite,
   });
   mat.userData.celColor = color;
+  addRim(mat);
   toonCache.set(key, mat);
   return mat;
 }

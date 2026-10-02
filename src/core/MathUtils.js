@@ -27,6 +27,24 @@ export function dampAngle(from, to, rate, dt) {
   return from + angleDelta(from, to) * (1 - Math.exp(-rate * dt));
 }
 
+/**
+ * Step a critically-damped-ish spring one frame.
+ *
+ * `s` is `{ value, velocity }`, mutated in place. This is what gives a rig
+ * follow-through: hair, coat tails and squash all chase a target rather than
+ * snapping to it, so the body leads and the soft parts arrive late.
+ *
+ * The step is clamped because a long frame (a tab coming back from the
+ * background, a hitch) can otherwise overshoot hard enough to explode.
+ */
+export function spring(s, target, stiffness, damping, dt) {
+  const step = Math.min(dt, 1 / 30);
+  s.velocity += (target - s.value) * stiffness * step;
+  s.velocity *= Math.exp(-damping * step);
+  s.value += s.velocity * step;
+  return s.value;
+}
+
 export function moveTowards(current, target, maxDelta) {
   const d = target - current;
   if (Math.abs(d) <= maxDelta) return target;
