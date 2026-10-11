@@ -719,6 +719,14 @@ html, body {
 }
 .picker__device b { color: var(--cyan); margin-right: 6px; }
 .picker__device.is-missing { color: #ff8080; border-color: #ff8080; }
+.picker__found {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: clamp(13px, 1.8vh, 16px);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--lime);
+}
 .picker__warn {
   width: 100%;
   text-align: center;

@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Controller Check</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 24px; background: #12131c; color: #f2ece0;
+    font: 15px/1.5 ui-monospace, Menlo, Consolas, monospace;
+  }
+  h1 { font: 700 24px/1.2 system-ui, sans-serif; margin: 0 0 4px; color: #24d6ff; }
+  p.lead { margin: 0 0 20px; color: #b9bcc9; font-family: system-ui, sans-serif; }
+  .card { background: #1b1e2c; border: 2px solid #2c2f3f; padding: 14px 16px; margin-bottom: 14px; }
+  .ok { color: #a8ff3e; } .bad { color: #ff4d4d; } .warn { color: #ffd21e; }
+  .big { font-size: 19px; font-weight: 700; }
+  button {
+    font: 700 16px system-ui, sans-serif; padding: 10px 22px; cursor: pointer;
+    background: #ffd21e; color: #12131c; border: 0; margin-bottom: 18px;
+  }
+  pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
+  .bar { display: inline-block; height: 10px; background: #24d6ff; vertical-align: middle; }
+  textarea { width: 100%; height: 170px; background: #0d0e16; color: #a8ff3e;
+             border: 2px solid #2c2f3f; font: 12px/1.4 ui-monospace, monospace; padding: 8px; }
+</style>
+</head>
+<body>
+<h1>Controller Check</h1>
+<p class="lead">
+  Click the button, then press buttons and move the sticks on your controller.
+  Browsers hide gamepads until the page has been clicked AND a button has been
+  pressed on the pad, so both are needed before anything appears.
+</p>
+
+<button id="wake">Click here first</button>
+
+<div class="card"><div id="env"></div></div>
+<div class="card"><div id="pads" class="big">Waiting…</div></div>
+<div class="card">
+  <div style="font-family:system-ui,sans-serif;margin-bottom:6px;color:#b9bcc9">
+    Copy this and send it back:
+  </div>
+  <textarea id="report" readonly></textarea>
+</div>
+
+<script>
+const $env = document.getElementById('env');
+const $pads = document.getElementById('pads');
+const $report = document.getElementById('report');
+let everSeen = 0;
+let pressedEver = new Set();
+let axesEver = new Set();
+
+document.getElementById('wake').addEventListener('click', () => {
+  document.getElementById('wake').textContent = 'Now press a button on the pad';
+});
+
+for (const ev of ['gamepadconnected', 'gamepaddisconnected']) {
+  window.addEventListener(ev, (e) => {
+    const g = e.gamepad;
+    log.push(`${ev}: index=${g.index} id="${g.id}" mapping="${g.mapping}" axes=${g.axes.length} buttons=${g.buttons.length}`);
+  });
+}
+const log = [];
+
+function pads() {
+  if (!navigator.getGamepads) return [];
+  return Array.from(navigator.getGamepads()).filter(Boolean);
+}
+
+function bar(v) {
+  const w = Math.round(Math.abs(v) * 60);
+  return `<span class="bar" style="width:${w}px"></span>`;
+}
+
+function frame() {
+  const list = pads();
+  everSeen = Math.max(everSeen, list.length);
+
+  $env.innerHTML = [
+    `protocol      ${location.protocol}`,
+    `secure ctx    ${window.isSecureContext}`,
+    `getGamepads   ${navigator.getGamepads ? '<span class="ok">available</span>' : '<span class="bad">MISSING</span>'}`,
+    `pads now      ${list.length ? `<span class="ok">${list.length}</span>` : '<span class="warn">0</span>'}`,
+    `pads ever     ${everSeen ? `<span class="ok">${everSeen}</span>` : '<span class="bad">0 — never appeared</span>'}`,
+    `browser       ${navigator.userAgent}`,
+  ].join('<br>');
+
+  if (!list.length) {
+    $pads.innerHTML = everSeen
+      ? '<span class="warn">Controller went away — press a button again</span>'
+      : '<span class="bad">No controller visible yet.</span><br>' +
+        '<span style="font-size:14px;color:#b9bcc9">Click the page, then press A / X / any button on the pad.</span>';
+  } else {
+    $pads.innerHTML = list.map((p) => {
+      const btns = p.buttons.map((b, i) => {
+        if (b.pressed || b.value > 0.1) pressedEver.add(i);
+        return b.pressed ? `<span class="ok">${i}</span>` : (b.value > 0.1 ? `<span class="warn">${i}:${b.value.toFixed(2)}</span>` : `${i}`);
+      }).join(' ');
+      const ax = p.axes.map((a, i) => {
+        if (Math.abs(a) > 0.3) axesEver.add(i);
+        return `  axis ${i}  ${a >= 0 ? ' ' : ''}${a.toFixed(3)} ${bar(a)}`;
+      }).join('<br>');
+      return [
+        `<span class="ok">index ${p.index}</span>  "${p.id}"`,
+        `mapping: <span class="${p.mapping === 'standard' ? 'ok' : 'bad'}">${p.mapping || '(none)'}</span>` +
+          `   axes: ${p.axes.length}   buttons: ${p.buttons.length}`,
+        ax,
+        `buttons: ${btns}`,
+      ].join('<br>');
+    }).join('<hr style="border-color:#2c2f3f">');
+  }
+
+  const p0 = list[0];
+  $report.value = [
+    `url protocol:  ${location.protocol}`,
+    `secure:        ${window.isSecureContext}`,
+    `getGamepads:   ${!!navigator.getGamepads}`,
+    `pads now:      ${list.length}`,
+    `pads ever:     ${everSeen}`,
+    `ua:            ${navigator.userAgent}`,
+    p0 ? `pad0 id:       ${p0.id}` : 'pad0:          (none)',
+    p0 ? `pad0 mapping:  ${p0.mapping || '(empty)'}` : '',
+    p0 ? `pad0 axes:     ${p0.axes.length}  buttons: ${p0.buttons.length}` : '',
+    `buttons seen:  ${[...pressedEver].sort((a,b)=>a-b).join(',') || 'none'}`,
+    `axes moved:    ${[...axesEver].sort((a,b)=>a-b).join(',') || 'none'}`,
+    `events:`,
+    ...log.slice(-8).map((l) => '  ' + l),
+  ].filter(Boolean).join('\n');
+
+  requestAnimationFrame(frame);
+}
+frame();
+</script>
+</body>
+</html>

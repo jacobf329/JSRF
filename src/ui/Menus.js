@@ -208,12 +208,24 @@ export class Menus {
       <div class="picker__device ${a.connected ? '' : 'is-missing'}">
         <b>P${a.player}</b> ${a.label}
       </div>`).join('');
-    const pads = this.game.input.padCount;
+    const input = this.game.input;
+    const pads = input.padCount;
     const short = count - pads - 2;   // pads, plus the two keyboard schemes
-    if (short > 0) {
-      this.$devices.innerHTML += `<div class="picker__warn">Plug in ${short} more gamepad${short > 1 ? 's' : ''} to fill every seat</div>`;
-    } else if (pads === 0) {
-      this.$devices.innerHTML += '<div class="picker__warn">No gamepad detected &mdash; plug one in and press a button</div>';
+    if (pads === 0) {
+      // Browsers hide gamepads until the page has been clicked and a button
+      // has been pressed on the pad itself -- plugging one in does nothing on
+      // its own. Saying so is the difference between a working controller and
+      // somebody concluding the game does not support theirs.
+      const report = input.padReport;
+      this.$devices.innerHTML += !report.supported
+        ? '<div class="picker__warn">This browser has no gamepad support</div>'
+        : '<div class="picker__warn">No gamepad yet &mdash; click this window, '
+          + 'then press a button on the pad</div>';
+    } else {
+      this.$devices.innerHTML += `<div class="picker__found">${pads} gamepad${pads > 1 ? 's' : ''} ready</div>`;
+      if (short > 0) {
+        this.$devices.innerHTML += `<div class="picker__warn">Plug in ${short} more to fill every seat</div>`;
+      }
     }
   }
 

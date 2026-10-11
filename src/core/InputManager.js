@@ -251,6 +251,20 @@ export class InputManager {
       this.pointerLocked = document.pointerLockElement === this.dom;
     };
 
+    // Firefox only ever exposes a pad through navigator.getGamepads() after a
+    // gamepadconnected event has fired, and will not fire one unless something
+    // is listening. Polling alone finds nothing there, however many buttons
+    // get pressed. These also give us a point to re-seat players on a hot
+    // plug, rather than waiting for the next menu refresh.
+    this._onGamepad = (e) => {
+      this._pollPads();
+      this.lastPadEvent = e.type === 'gamepadconnected'
+        ? `${e.gamepad.id} (${e.gamepad.mapping || 'non-standard'})`
+        : null;
+      this.onPadChange?.();
+    };
+    window.addEventListener('gamepadconnected', this._onGamepad);
+    window.addEventListener('gamepaddisconnected', this._onGamepad);
     window.addEventListener('keydown', this._onKeyDown);
     window.addEventListener('keyup', this._onKeyUp);
     window.addEventListener('blur', this._onBlur);
@@ -263,6 +277,15 @@ export class InputManager {
 
   getPad(index) {
     return this.pads[index] || null;
+  }
+
+  /** What the browser has actually handed us, for the title screen to show. */
+  get padReport() {
+    if (!navigator.getGamepads) return { supported: false, pads: [] };
+    return {
+      supported: true,
+      pads: this.pads.map((p) => ({ id: p.id, mapping: p.mapping, axes: p.axes.length, buttons: p.buttons.length })),
+    };
   }
 
   get padCount() { return this.pads.length; }
@@ -407,6 +430,8 @@ export class InputManager {
   }
 
   dispose() {
+    window.removeEventListener('gamepadconnected', this._onGamepad);
+    window.removeEventListener('gamepaddisconnected', this._onGamepad);
     window.removeEventListener('keydown', this._onKeyDown);
     window.removeEventListener('keyup', this._onKeyUp);
     window.removeEventListener('blur', this._onBlur);
